@@ -1510,7 +1510,7 @@ calculate_species_env_means <- function(species_data, env_data, site_id_col = "s
   return(species_means)
 }
 
-calculate_community_traits <- function(community_data, traits_data, species_col = "species", abundance_col = NULL) {
+calculate_community_traits <- function(community_data, traits_data, species_col = "species", abundance_col = NULL, trait_cols = NULL) {
   # Ensure inputs are tibbles, preserving row names as site IDs
  
     site_ids <- rownames(community_data)
@@ -1518,10 +1518,13 @@ calculate_community_traits <- function(community_data, traits_data, species_col 
       mutate(plot_id_releve = site_ids, .before = 1)
   
   # Ensure traits_data is a tibble
-  traits_data <- as_tibble(traits_data)
+  traits_data <- as_tibble(traits_data)%>%
+    select(-`...1`)
   
   # Identify trait columns (all columns except species column in traits_data)
+  if(is.null(trait_cols)){
   trait_cols <- setdiff(colnames(traits_data), species_col)
+  }
   
   # Identify species columns (all columns except site_id in community_data)
   species_cols <- setdiff(colnames(community_data), "plot_id_releve")
@@ -1623,3 +1626,494 @@ create_pca_biplot <- function(data, variables, scaling_factor = 5, point_size = 
   # Return list with the plot and PCA results for further analysis
   return(list(plot = p, pca = res.pca, ind_coords = ind_coords, var_coords = var_coords))
 }
+# ==============================================================================
+# CUSTOM TERNARY PLOT FUNCTIONS FOR JSDM VARIANCE PARTITIONING
+# ==============================================================================
+# Adapted from sjSDM package internal functions
+# Modified to color by species altitude ranges and community altitude
+
+# Function to create abbreviated species name (first 4 letters of genus and species)
+abbrev_species = function(sp_name) {
+  paste0(substring(word(sp_name, 1),1,4), toupper(substring(word(sp_name, 2),1,1)), substring(word(sp_name, 2),2,4))
+}
+
+
+deg2rad = function(deg) {
+  return(deg * pi / 180)
+}
+
+get_coords = function(X) {
+  x_w = X[1] + sin(deg2rad(30)) * X[2]
+  y_w = cos(deg2rad(30)) * X[2]
+  return(c(x_w, y_w))
+}
+
+plot_line = function(X, Y, arrow = FALSE, ...) {
+  Xc = get_coords(X)
+  Yc = get_coords(Y)
+  
+  if(arrow) {
+    arrows(Xc[1], Xc[2], Yc[1], Yc[2], ...)
+  } else {
+    segments(Xc[1], Xc[2], Yc[1], Yc[2], ...)
+  }
+}
+
+plot_tern_base = function(data1, length = 0.12, col = "black", bg = NULL, cex = 1.0,
+                          alpha = 0.7,
+                          color_env = "#81caf3", color_codist = "#00bd89", color_spa = "#d00000") {
+  # Draw triangle frame
+  segments(0, 0, 1, 0)
+  segments(0, 0.0, 0.5, 0.8660254)
+  segments(1, 0, 0.5, 0.8660254)
+
+  # Grid lines and labels
+  for(i in seq(0.2, 0.8, length.out = 4)) {
+    plot_line(c(1-i, 0.0, i), c(0.0, 1-i, i), col = "lightgrey")
+    plot_line(c(1-i, i, 0.0), c(1-i, 0.0, i), col = "lightgrey")
+    plot_line(c(0, i, 1-i), c(1-i, i, 0), col = "lightgrey")
+
+    text(get_coords(c(1-i, 0.0, i))[1], get_coords(c(1-i, 0.0, i))[2]-0.03,
+         labels = 1-i, srt = 60, xpd = NA)
+    text(get_coords(c(1-i, i, 0.0))[1]+0.05, get_coords(c(1-i, i, 0.0))[2],
+         labels = i, xpd = NA)
+    text(get_coords(c(0, i, 1-i))[1]-0.03, get_coords(c(0, i, 1-i))[2]+0.03,
+         labels = 1-i, xpd = NA, srt = -50)
+  }
+
+  # Axis labels with custom colors
+  # Based on get_coords input order [spa, codist, env]:
+  # Bottom-left (0,0) = env, Bottom-right (1,0) = spa, Top (0.5,0.866) = codist
+  text(1, y = -0.02, pos = 1, xpd = NA, label = "Space", col = color_spa, font = 2)
+  text(-0.1, y = -0.02, pos = 1, xpd = NA, label = "Environment", col = color_env, font = 2)
+  text(0.5, y = 0.9, pos = 3, xpd = NA, label = "Species associations", col = color_codist, font = 2)
+
+  # Normalize data
+  data1[,1:3] = data1[,1:3]/rowSums(data1[,1:3])
+
+  # Handle colors with alpha
+  if(length(col) == 1) col = rep(col, nrow(data1))
+  if(length(cex) == 1) cex = rep(cex, nrow(data1))
+
+  # Apply alpha to colors
+  if(!is.null(bg)) {
+    if(length(bg) == 1) bg = rep(bg, nrow(data1))
+    # Add alpha transparency to bg colors
+    bg = adjustcolor(bg, alpha.f = alpha)
+  } else {
+    bg = adjustcolor(col, alpha.f = alpha)
+  }
+
+  # Set border color with alpha
+  col = adjustcolor(col, alpha.f = alpha)
+
+  # Plot points
+  for(i in 1:nrow(data1)) {
+    # Extract as [spa, codist, env] to match sjSDM coordinate system
+    # where top=codist, bottom-left=env, bottom-right=spa
+    coords = get_coords(unlist(data1[i, c(3, 2, 1)]))
+    points(x = coords[1], y = coords[2], col = col[i], bg = bg[i], cex = cex[i], pch = 21)
+  }
+}
+
+# Custom function for species ternary (colored by altitude range) - ggplot version
+plot_tern_species = function(res, veg, veg.clim,
+                             color_env = "#81caf3",
+                             color_codist = "#00bd89",
+                             color_spa = "#d00000",
+                             color_palette = NULL,
+                             alpha = 0.7,
+                             cex = 1.5) {
+
+  # Calculate species altitude ranges
+  species_altitude_ranges = veg.clim %>%
+    select(plot_id_releve, altitude) %>%
+    distinct() %>%
+    left_join(
+      veg %>% select(plot_id_releve, species, species_cover),
+      by = "plot_id_releve"
+    ) %>%
+    filter(species_cover > 0) %>%
+    group_by(species) %>%
+    summarize(
+      min_altitude = min(altitude, na.rm = TRUE),
+      max_altitude = max(altitude, na.rm = TRUE),
+      altitude_range = max_altitude - min_altitude,
+      mean_altitude = mean(altitude, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  # Get species variance data
+  species_data = res$internals$Species %>%
+    rownames_to_column("species") %>%
+    left_join(species_altitude_ranges, by = "species") %>%
+    filter(!is.na(altitude_range))
+
+  # Calculate proportions and coordinates
+  species_data = species_data %>%
+    mutate(
+      total = env + codist + spa,
+      env_prop = env / total,
+      codist_prop = codist / total,
+      spa_prop = spa / total
+    )
+
+  # Add x,y coordinates for plotting
+  # IMPORTANT: Must match base R version which does data1[i, c(3,2,1)] on [env, codist, spa]
+  # This gives [spa, codist, env] order for get_coords()
+  species_data$x = NA
+  species_data$y = NA
+  for(i in 1:nrow(species_data)) {
+    # Normalize first
+    total = species_data$env[i] + species_data$codist[i] + species_data$spa[i]
+    env_norm = species_data$env[i] / total
+    codist_norm = species_data$codist[i] / total
+    spa_norm = species_data$spa[i] / total
+    # Pass as [spa, codist, env] to match sjSDM coordinate system
+    coords = get_coords(c(spa_norm, codist_norm, env_norm))
+    species_data$x[i] = coords[1]
+    species_data$y[i] = coords[2]
+  }
+
+  # Set color palette
+  if(is.null(color_palette)) {
+    color_palette = colorRampPalette(c("gray90", "gray20"))
+  }
+
+  # Identify corner species for labeling
+  species_data$dist_env = sqrt(species_data$x^2 + species_data$y^2)
+  species_data$dist_codist = sqrt((species_data$x - 0.5)^2 + (species_data$y - 0.866)^2)
+  species_data$dist_spa = sqrt((species_data$x - 1)^2 + species_data$y^2)
+
+  # Find corner species
+  corner_species = bind_rows(
+    species_data %>% filter(env_prop > 0.8) %>% arrange(dist_env) %>% head(3),
+    species_data %>% filter(codist_prop > 0.8) %>% arrange(dist_codist) %>% head(3),
+    species_data %>% filter(spa_prop > 0.8) %>% arrange(dist_spa) %>% head(3)
+  ) %>%
+    distinct(species, .keep_all = TRUE)
+
+  # Find center species (each proportion close to 1/3 = 0.33)
+  # Center of ternary plot is where all three proportions are equal (≈0.33 each)
+  center_species = species_data %>%
+    filter(
+      env_prop >= 0.25 & env_prop <= 0.40,
+      codist_prop >= 0.25 & codist_prop <= 0.40,
+      spa_prop >= 0.25 & spa_prop <= 0.40
+    ) %>%
+    mutate(dist_center = sqrt((x - 0.5)^2 + (y - 0.289)^2)) %>%  # Center is at (0.5, 0.289)
+    arrange(dist_center) %>%
+    head(3)
+
+  # Combine all species to label
+  labeled_species = bind_rows(corner_species, center_species) %>%
+    distinct(species, .keep_all = TRUE) %>%
+    mutate(label = abbrev_species(species))
+
+  # Create ternary triangle outline with colored edges
+  triangle_edges = data.frame(
+    x_start = c(0, 1, 0.5),
+    y_start = c(0, 0, 0.866),
+    x_end = c(1, 0.5, 0),
+    y_end = c(0, 0.866, 0),
+    edge = c("spa", "codist", "env")
+  )
+
+  # Create grid lines and labels
+  grid_lines = data.frame()
+  grid_labels = data.frame()
+
+  for(val in seq(0.2, 0.8, 0.2)) {
+    # Horizontal lines (parallel to bottom, for codist axis)
+    grid_lines = bind_rows(grid_lines, data.frame(
+      x = c(val/2, 1 - val/2),
+      y = c(val * 0.866, val * 0.866),
+      group = paste0("h", val),
+      axis = "codist"
+    ))
+    # Label for codist axis (left side)
+    label_pos = get_coords(c(1-val, 0.0, val))
+    grid_labels = bind_rows(grid_labels, data.frame(
+      x = label_pos[1],
+      y = label_pos[2] - 0.03,
+      label = as.character(1-val),
+      angle = 60
+    ))
+
+    # Left diagonal lines (parallel to left edge, for spa axis)
+    grid_lines = bind_rows(grid_lines, data.frame(
+      x = c(val, 0.5 + val/2),
+      y = c(0, (1-val) * 0.866),
+      group = paste0("l", val),
+      axis = "spa"
+    ))
+    # Label for spa axis (bottom right)
+    label_pos = get_coords(c(1-val, val, 0.0))
+    grid_labels = bind_rows(grid_labels, data.frame(
+      x = label_pos[1] + 0.05,
+      y = label_pos[2],
+      label = as.character(val),
+      angle = 0
+    ))
+
+    # Right diagonal lines (parallel to right edge, for env axis)
+    grid_lines = bind_rows(grid_lines, data.frame(
+      x = c(1-val, 0.5 - val/2),
+      y = c(0, (1-val) * 0.866),
+      group = paste0("r", val),
+      axis = "env"
+    ))
+    # Label for env axis (bottom left)
+    label_pos = get_coords(c(0, val, 1-val))
+    grid_labels = bind_rows(grid_labels, data.frame(
+      x = label_pos[1] - 0.03,
+      y = label_pos[2] + 0.03,
+      label = as.character(1-val),
+      angle = -50
+    ))
+  }
+
+  # Create plot
+  p = ggplot() +
+    # Triangle outline with colored edges
+    geom_segment(data = triangle_edges,
+                 aes(x = x_start, y = y_start, xend = x_end, yend = y_end, color = edge),
+                 linewidth = 1.2) +
+    scale_color_manual(values = c("env" = color_env, "codist" = color_codist, "spa" = color_spa),
+                       guide = "none") +
+    # Grid lines colored by axis they represent
+    geom_line(data = grid_lines, aes(x = x, y = y, group = group, color = axis),
+              linewidth = 0.5, alpha = 0.3) +
+    # Grid labels
+    geom_text(data = grid_labels, aes(x = x, y = y, label = label, angle = angle),
+              size = 5, color = "gray30") +
+    # Species points
+    geom_point(data = species_data, aes(x = x, y = y, fill = mean_altitude),
+               shape = 21, size = cex * 2, alpha = alpha, color = "black", stroke = 0.2) +
+    # Labels for corner and center species
+    geom_text_repel(data = labeled_species, aes(x = x, y = y, label = label),
+                    size = 4, fontface = "italic",
+                    force = 10,
+                    min.segment.length = 0.01,
+                    segment.color = "gray50") +
+    # Color scale
+    scale_fill_gradientn(colors = color_palette(100),
+                         name = "Mean\naltitude (m)",
+                         guide = guide_colorbar(barwidth = 0.8, barheight = 8)) +
+    annotate("text", x = 0, y = 0, label = "Environment",
+             color = color_env, fontface = "bold", hjust = 1.2, size = 4.5) +
+    annotate("text", x = 0.5, y = 0.95, label = "Species associations",
+             color = color_codist, fontface = "bold", hjust = 1, size = 4.5) +
+    annotate("text", x = 1, y = 0.01, label = "Space",
+             color = color_spa, fontface = "bold", hjust = -0.6, size = 4.5) +
+    # Title
+    ggtitle("Species") +
+    # Theme
+    coord_fixed(clip = "off") +
+    theme_void() +
+    theme(
+      plot.title = element_text(hjust = -0.1, face = "bold", size = 12),
+      legend.position = "right",
+      plot.margin = margin(20, 10, 30, 40)
+    )
+
+  return(p)
+}
+
+# Custom function for sites/communities ternary (colored by altitude) - ggplot version
+plot_tern_sites = function(res, veg.clim,
+                           color_env = "#81caf3",
+                           color_codist = "#00bd89",
+                           color_spa = "#d00000",
+                           color_palette = NULL,
+                           alpha = 0.7,
+                           cex = 1.5) {
+
+  # Load required packages
+  require(ggplot2)
+
+  # Get sites variance data
+  sites_data = res$internals$Sites %>%
+    rownames_to_column("plot_id_releve") %>%
+    left_join(veg.clim %>% select(plot_id_releve, altitude) %>% distinct(),
+              by = "plot_id_releve") %>%
+    filter(!is.na(altitude))
+
+  # Add x,y coordinates for plotting
+  # IMPORTANT: Must match base R version - normalize and pass as [spa, codist, env]
+  sites_data$x = NA
+  sites_data$y = NA
+  for(i in 1:nrow(sites_data)) {
+    # Normalize first
+    total = sites_data$env[i] + sites_data$codist[i] + sites_data$spa[i]
+    env_norm = sites_data$env[i] / total
+    codist_norm = sites_data$codist[i] / total
+    spa_norm = sites_data$spa[i] / total
+    # Pass as [spa, codist, env] to match sjSDM coordinate system
+    coords = get_coords(c(spa_norm, codist_norm, env_norm))
+    sites_data$x[i] = coords[1]
+    sites_data$y[i] = coords[2]
+  }
+
+  # Set color palette
+  if(is.null(color_palette)) {
+    color_palette = colorRampPalette(c("gray90", "gray20"))
+  }
+
+  # Create ternary triangle outline with colored edges
+  triangle_edges = data.frame(
+    x_start = c(0, 1, 0.5),
+    y_start = c(0, 0, 0.866),
+    x_end = c(1, 0.5, 0),
+    y_end = c(0, 0.866, 0),
+    edge = c("spa", "codist", "env")
+  )
+
+  # Create grid lines and labels
+  grid_lines = data.frame()
+  grid_labels = data.frame()
+
+  for(val in seq(0.2, 0.8, 0.2)) {
+    # Horizontal lines (parallel to bottom, for codist axis)
+    grid_lines = bind_rows(grid_lines, data.frame(
+      x = c(val/2, 1 - val/2),
+      y = c(val * 0.866, val * 0.866),
+      group = paste0("h", val),
+      axis = "codist"
+    ))
+    # Label for codist axis (left side)
+    label_pos = get_coords(c(1-val, 0.0, val))
+    grid_labels = bind_rows(grid_labels, data.frame(
+      x = label_pos[1],
+      y = label_pos[2] - 0.03,
+      label = as.character(1-val),
+      angle = 60
+    ))
+
+    # Left diagonal lines (parallel to left edge, for spa axis)
+    grid_lines = bind_rows(grid_lines, data.frame(
+      x = c(val, 0.5 + val/2),
+      y = c(0, (1-val) * 0.866),
+      group = paste0("l", val),
+      axis = "spa"
+    ))
+    # Label for spa axis (bottom right)
+    label_pos = get_coords(c(1-val, val, 0.0))
+    grid_labels = bind_rows(grid_labels, data.frame(
+      x = label_pos[1] + 0.05,
+      y = label_pos[2],
+      label = as.character(val),
+      angle = 0
+    ))
+
+    # Right diagonal lines (parallel to right edge, for env axis)
+    grid_lines = bind_rows(grid_lines, data.frame(
+      x = c(1-val, 0.5 - val/2),
+      y = c(0, (1-val) * 0.866),
+      group = paste0("r", val),
+      axis = "env"
+    ))
+    # Label for env axis (bottom left)
+    label_pos = get_coords(c(0, val, 1-val))
+    grid_labels = bind_rows(grid_labels, data.frame(
+      x = label_pos[1] - 0.03,
+      y = label_pos[2] + 0.03,
+      label = as.character(1-val),
+      angle = -50
+    ))
+  }
+
+  # Create plot
+  p = ggplot() +
+    # Triangle outline with colored edges
+    geom_segment(data = triangle_edges,
+                 aes(x = x_start, y = y_start, xend = x_end, yend = y_end, color = edge),
+                 linewidth = 1.2) +
+    scale_color_manual(values = c("env" = color_env, "codist" = color_codist, "spa" = color_spa),
+                       guide = "none") +
+    # Grid lines colored by axis they represent
+    geom_line(data = grid_lines, aes(x = x, y = y, group = group, color = axis),
+              linewidth = 0.5, alpha = 0.3) +
+    # Grid labels
+    geom_text(data = grid_labels, aes(x = x, y = y, label = label, angle = angle),
+              size = 5, color = "gray30") +
+    # Sites points
+    geom_point(data = sites_data, aes(x = x, y = y, fill = altitude),
+               shape = 21, size = cex * 2, alpha = alpha, color = "black", stroke = 0.2) +
+    # Color scale
+    scale_fill_gradientn(colors = color_palette(100),
+                         name = "Altitude\n(m)",
+                         guide = guide_colorbar(barwidth = 0.8, barheight = 8)) +
+    annotate("text", x = 0, y = 0, label = "Environment",
+             color = color_env, fontface = "bold", hjust = 1.2, size = 4.5) +
+    annotate("text", x = 0.5, y = 0.95, label = "Species associations",
+             color = color_codist, fontface = "bold", hjust = 1, size = 4.5) +
+    annotate("text", x = 1, y = 0.01, label = "Space",
+             color = color_spa, fontface = "bold", hjust = -0.6, size = 4.5) +
+    # Title
+    ggtitle("Sites") +
+    # Theme
+    coord_fixed(clip = "off") +
+    theme_void() +
+    theme(
+      plot.title = element_text(hjust = -0.1, face = "bold", size = 12),
+      legend.position = "right",
+      plot.margin = margin(20, 10, 30, 40)
+    )
+
+  return(p)
+}
+
+plot.anova.custom = function(x,
+                             y,
+                             type = c( "McFadden", "Deviance", "Nagelkerke"),
+                             fractions = c("discard", "proportional", "equal"),
+                             cols = c("#81caf3","#00bd89","#d00000"),
+                             alpha=0.15,
+                             env_deviance = NULL,
+                             ...) {
+  fractions = match.arg(fractions)
+  lineSeq = 0.3
+  nseg = 100
+  dr = 1.0
+  type = match.arg(type)
+  out = list()
+  oldpar = par(no.readonly = TRUE)
+  on.exit(par(oldpar))
+  values = x$results
+  select_rows =
+    if(x$spatial) {
+      sapply(c("F_A", "F_B", "F_AB","F_S", "F_AS", "F_BS", "F_ABS"), function(i) which(values$models == i, arr.ind = TRUE))
+    } else {
+      sapply(c("F_A", "F_B", "F_AB"), function(i) which(values$models == i, arr.ind = TRUE))
+    }
+  values = values[select_rows,]
+  col_index =
+    switch (type,
+            Deviance = 4,
+            Nagelkerke = 5,
+            McFadden = 6
+    )
+  graphics::plot(NULL, NULL, xlim = c(0,1), ylim =c(0,1),pty="s", axes = FALSE, xlab = "", ylab = "")
+  xx = 1.1*lineSeq*cos( seq(0,2*pi, length.out=nseg))
+  yy = 1.1*lineSeq*sin( seq(0,2*pi, length.out=nseg))
+  graphics::polygon(xx+lineSeq,yy+(1-lineSeq), col= addA(cols[1],alpha = alpha), border = "black", lty = 1, lwd = 1)
+  graphics::text(lineSeq-0.1, (1-lineSeq),labels = round(values[1,col_index],3))
+  graphics::text(mean(xx+lineSeq), 0.9,labels = "Environmental", pos = 3)
+  graphics::polygon(xx+1-lineSeq,yy+1-lineSeq, col= addA(cols[2],alpha = alpha), border = "black", lty = 1, lwd = 1)
+  graphics::text(1-lineSeq+0.1, (1-lineSeq),labels = round(values[2,col_index],3))
+  graphics::text(1-mean(xx+lineSeq), 0.9,labels = "Associations", pos = 3)
+  graphics::text(0.5, (1-lineSeq),labels = round(values[3,col_index],3))
+  if(x$spatial) {
+    graphics::polygon(xx+0.5,yy+lineSeq, col= addA(cols[3],alpha = alpha), border = "black", lty = 1, lwd = 1)
+    graphics::text(0.5, lineSeq+0.0,pos = 1,labels = round(values[4,col_index],3))
+    graphics::text(0.5, 0.1,labels = "Spatial", pos = 1)
+    graphics::text(0.3, 0.5,pos=1,labels   = round(values[5,col_index],3)) # AS
+    graphics::text(1-0.3, 0.5,pos=1,labels = round(values[6,col_index],3)) # BS
+    graphics::text(0.5, 0.5+0.05,labels    = round(values[7,col_index],3)) # ABS
+  }
+  out$VENN = values
+  return(invisible(out))
+}
+
+addA = function(col, alpha = 0.25) apply(sapply(col, grDevices::col2rgb)/255, 2, function(x) grDevices::rgb(x[1], x[2], x[3], alpha=alpha))

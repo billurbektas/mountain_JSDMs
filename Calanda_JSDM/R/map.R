@@ -14,6 +14,7 @@ switzerland <- ne_countries(scale = "medium", country = "Switzerland", returncla
 # Convert vegetation coordinates to sf object
 # Note: The x and y coordinates appear to be in EPSG:4326 (WGS84) format
 veg_points <- veg.clim %>%
+  filter(trees_cover == 0)%>%
   st_as_sf(coords = c( "Longitude", "Latitude"), crs = 4326)
 
 # Load your shapefile

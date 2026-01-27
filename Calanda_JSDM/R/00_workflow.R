@@ -11,20 +11,47 @@ library(corrplot)
 library(gt)
 library(gridExtra)
 library(grid)
-library(ggtern)
 library(conflicted)
 library(miceRanger)
 library(patchwork)
+library(ggrepel)
+library(spatialEco)
+library(randomForest)
+library(caret)
+library(mvabund)
+library(tidyverse)
+library(sf)
+library(terra)
+library(tidyterra)
+#library(ggtern) ## doesnt work. 
+library(patchwork)
+library(factoextra)
+library(FactoMineR)
+library(qgam)
+library(mvabund)
+library(here)
+library(ggforce)
+library(ggrepel)
 
 conflict_prefer("filter", "dplyr")
 conflict_prefer("select", "dplyr")
 conflict_prefer("aes", "ggplot2")
 conflict_prefer("extract", "terra")
 conflict_prefer("year", "lubridate")
-conflicts_prefer(dplyr::first)
-conflicts_prefer(base::intersect)
-conflicts_prefer(ggplot2::theme_minimal)
+conflict_prefer("first", "dplyr")
+conflict_prefer("intersect", "base")
+conflict_prefer("theme_minimal", "ggplot2")
+conflict_prefer("theme_bw", "ggplot2")
+conflict_prefer("shift", "terra")
+conflict_prefer("margin", "ggplot2")
+conflicts_prefer(ggplot2::theme_classic)
 
+setwd("Calanda_JSDM/")
+source("R/functions_calanda.R")
+
+# Load data
+load("data/vegetation/TransPlantNetwork_101024.RData")
+load("output/starter_data_25.04.25.RData")
 #https://github.com/TheoreticalEcology/s-jSDM
 #https://cran.r-project.org/web/packages/sjSDM/vignettes/sjSDM_Introduction.html
 
@@ -42,13 +69,14 @@ conflicts_prefer(ggplot2::theme_minimal)
 # reticulate::py_install("scikit-multilearn", pip = TRUE)
 # sklearn = reticulate::import("skmultilearn")
 
-setwd("Calanda_JSDM/")
+
 veg_coord = read_csv("data/vegetation/2024_CAPHE_SpeDis_CleanData_20240214.csv")%>%
   select(plot_id, releve_id, x, y )%>%
   distinct()
 write_csv(veg_coord, file = "data/vegetation/veg.coord.csv")
 # Get coordinates data for downloads
 veg_coord = read_csv("data/vegetation/veg.coord.csv")[,-1]
+
 veg_coord_ecostress = 
   veg_coord %>%
   mutate(ID = paste0(plot_id, "_", releve_id))%>%
@@ -59,11 +87,9 @@ write.csv(veg_coord_ecostress, file = "data/veg_coord_ecostress.csv")
 # Get functions
 source("R/functions_calanda.R")
 
-# Load data
-load("data/vegetation/TransPlantNetwork_101024.RData")
 
 # Workflow
-if(file.exists("output/starter_data.RData")){
-  load("output/starter_data.RData")
+if(file.exists("output/starter_data_25.04.25.RData")){
+  load("output/starter_data_25.04.25.RData")
 }else{source("R/01_prepare_data.R")}
 
