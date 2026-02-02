@@ -1,61 +1,88 @@
+# ==============================================================================
+# Script: 02_jsdm.R
+# Purpose: Fit spatial Joint Species Distribution Model using sjSDM (GPU)
+#
+# Inputs:
+#   - output/data_calanda_jsdm.rds (X and Y matrices from 01_prepare_data.R)
+#
+# Outputs:
+#   - output/model_sjsdm_calanda.rds
+#   - output/R2_sjsdm_calanda.rds
+#   - output/an_sjsdm_calanda.rds
+#   - output/res_sjsdm_calanda.rds
+#
+# Note: Requires GPU. Authoritative results are in results_from_Max/.
+# ==============================================================================
+
 library(sjSDM)
 library(tidyverse)
 library(conflicted)
+library(here)
 
-conflict_prefer("filter", "dplyr")
 conflict_prefer("select", "dplyr")
+conflict_prefer("filter", "dplyr")
 
-data_calanda_jsdm = readRDS("output/data_calanda_jsdm.rds")
+# Load data ----
+data_calanda_jsdm = readRDS(here("Calanda_JSDM", "output", "data_calanda_jsdm.rds"))
 X = data_calanda_jsdm$X
 Y = data_calanda_jsdm$Y
 
-lambda.env = 0.001  
-alpha.env = 1.0
+# Hyperparameters ----
+lambda_env = 0.001
+alpha_env = 1.0
 
-lambda.sp = 0.002 
-alpha.sp = 0.2
+lambda_sp = 0.002
+alpha_sp = 0.2
 
-lambda.bio = 0.001
-alpha.bio = 1.0
+lambda_bio = 0.001
+alpha_bio = 1.0
 
 learning_rate = 0.01
-sampling = 50000L 
+sampling = 50000L
 device = "gpu"
-iterations = 750L 
+iterations = 750L
 act = "selu"
 
-model = 
-  sjSDM(
+# Fit model ----
+cat("\n=== Fitting sjSDM model ===\n")
+
+model = sjSDM(
   Y = Y,
   env = linear(X,
-               formula = ~summer_temp + fdd + et.annual + slope + rocks_cover + trees_cover + shrubs_cover + soil_depth_mean + soil_depth_var + tpi + flowdir + roughness + land_use, 
-               lambda = lambda.sp, alpha = alpha.sp), 
-  spatial = DNN(X %>% select(Latitude, Longitude), 
-                formula = ~0+.,
-                activation = act,
-                hidden = rep(30, 2),
-                bias = FALSE,
-                lambda = lambda.sp, alpha = alpha.sp),
-  #spatial = linear(data = veg.env, formula = ~0+x*y, lambda = lambda.sp, alpha = alpha.sp),  
-  biotic = bioticStruct(lambda = lambda.bio, alpha = alpha.bio, df = ncol(Y), reg_on_Cov = FALSE),
+    formula = ~summer_temp + fdd + et_annual + slope + rocks_cover +
+      trees_cover + shrubs_cover + soil_depth_mean + soil_depth_var +
+      tpi + flowdir + roughness + land_use,
+    lambda = lambda_sp, alpha = alpha_sp),
+  spatial = DNN(X %>% select(Latitude, Longitude),
+    formula = ~0 + .,
+    activation = act,
+    hidden = rep(30, 2),
+    bias = FALSE,
+    lambda = lambda_sp, alpha = alpha_sp),
+  biotic = bioticStruct(lambda = lambda_bio, alpha = alpha_bio,
+                        df = ncol(Y), reg_on_Cov = FALSE),
   iter = iterations,
   device = device,
   learning_rate = learning_rate,
   sampling = sampling,
-  control = sjSDMControl(RMSprop(weight_decay = 0.0), 
-                         scheduler = 5L, 
-                         early_stopping_training = 25L, 
+  control = sjSDMControl(RMSprop(weight_decay = 0.0),
+                         scheduler = 5L,
+                         early_stopping_training = 25L,
                          lr_reduce_factor = 0.9),
-  se=T
+  se = TRUE
 )
 
-saveRDS(model, file ="output/model_sjsdm_calanda_260425.RDS")
+saveRDS(model, here("Calanda_JSDM", "output", "model_sjsdm_calanda.rds"))
 
-R2 = Rsquared(model, verbose = TRUE) #0.3496262
+# Variance partitioning ----
+cat("Computing R², ANOVA, and internal structure...\n")
+
+R2 = Rsquared(model, verbose = TRUE)
 an = anova(model, verbose = TRUE, samples = sampling)
 res = internalStructure(an, fractions = "proportional")
 
-saveRDS(R2, file ="output/R2_sjsdm_calanda_260425.RDS")
-saveRDS(an, file ="output/an_sjsdm_calanda_260425.RDS")
-saveRDS(res, file ="output/res_sjsdm_calanda_260425.RDS")
+saveRDS(R2, here("Calanda_JSDM", "output", "R2_sjsdm_calanda.rds"))
+saveRDS(an, here("Calanda_JSDM", "output", "an_sjsdm_calanda.rds"))
+saveRDS(res, here("Calanda_JSDM", "output", "res_sjsdm_calanda.rds"))
 
+cat("\n=== Model fitting complete ===\n")
