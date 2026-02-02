@@ -1,15 +1,33 @@
 # ==============================================================================
-# TRAIT COVERAGE ASSESSMENT
+# Script: assess_trait_coverage.R
+# Purpose: Assess trait data coverage per community and test for bias in
+#          variance components between high-coverage and all communities.
+#
+# Inputs:
+#   - output/species_trait_summary.csv (from 01_prepare_trait_data.R)
+#   - output/starter_data_25.04.25.RData (veg_abund, res)
+#
+# Outputs:
+#   - output/community_trait_coverage.csv
+#   - output/species_missing_traits.csv
+#   - output/community_coverage_variance.csv
+#   - output/coverage_bias_summary.csv
+#   - output/species_variance_trait_status.csv
+#   - output/species_bias_summary.csv
+#   - plot/trait_coverage_assessment.pdf
+#   - plot/trait_coverage_bias.pdf
+#   - plot/species_trait_coverage_bias.pdf
 # ==============================================================================
-# This script assesses what percentage of species in each community have
-# trait data available, both by presence/absence and weighted by relative cover
-cat("\n=== Trait Coverage Assessment ===\n")
 
 library(tidyverse)
-library(dgof)  # For Cramér-von Mises test
+library(dgof)
+library(patchwork)
+library(here)
+
+cat("\n=== Trait Coverage Assessment ===\n")
 
 # Load the species trait summary
-trait_summary = read_csv("output/species_trait_summary.csv")%>%
+trait_summary = read_csv(here("Calanda_JSDM", "output", "species_trait_summary.csv")) %>%
   mutate(plant_species = case_when(plant_species == "Acinos alpinus" ~ "Clinopodium alpinum",
                                    plant_species == "Euphrasia rostkoviana" ~ "Euphrasia officinalis subsp. pratensis",
                                    plant_species == "Festuca pratensis" ~ "Lolium pratense",
@@ -30,22 +48,19 @@ species_with_traits = trait_summary %>%
 cat(sprintf("\nTotal species with trait data: %d\n", length(species_with_traits)))
 cat(sprintf("Total species in trait summary: %d\n", nrow(trait_summary)))
 
-# Load abundance data (veg.abund should be in the workspace or loaded from RData)
-if(!exists("veg.abund")) {
-  cat("\nLoading data from starter_data_25.04.25.RData...\n")
-  load("output/starter_data_25.04.25.RData")
-}
+# Load abundance data and JSDM results
+cat("\nLoading data from starter_data_25.04.25.RData...\n")
+load(here("Calanda_JSDM", "output", "starter_data_25.04.25.RData"))
 
-# Check if veg.abund exists
-if(!exists("veg.abund")) {
-  stop("Error: veg.abund not found in workspace or RData file")
-}
+# Rename dotted objects from RData to snake_case
+veg_abund = veg.abund
+rm(veg.abund)
 
-cat(sprintf("\nNumber of communities (plots): %d\n", nrow(veg.abund)))
-cat(sprintf("Number of species in communities: %d\n", ncol(veg.abund)))
+cat(sprintf("\nNumber of communities (plots): %d\n", nrow(veg_abund)))
+cat(sprintf("Number of species in communities: %d\n", ncol(veg_abund)))
 
-# Convert veg.abund to long format for easier analysis
-abund_long = veg.abund %>%
+# Convert veg_abund to long format for easier analysis
+abund_long = veg_abund %>%
   as.data.frame() %>%
   rownames_to_column("plot_id") %>%
   pivot_longer(-plot_id, names_to = "species", values_to = "rel_cover") %>%
@@ -130,16 +145,14 @@ cat("Top 20 most common species without trait data:\n")
 print(species_missing_traits %>% head(20))
 
 # Save results
-write_csv(community_coverage, "output/community_trait_coverage.csv")
-write_csv(species_missing_traits, "output/species_missing_traits.csv")
+write_csv(community_coverage, here("Calanda_JSDM", "output", "community_trait_coverage.csv"))
+write_csv(species_missing_traits, here("Calanda_JSDM", "output", "species_missing_traits.csv"))
 
 cat("\n=== Output files created ===\n")
 cat("- output/community_trait_coverage.csv: Coverage metrics for each community\n")
 cat("- output/species_missing_traits.csv: Species lacking trait data with their prevalence\n")
 
 # Create visualization
-library(ggplot2)
-library(patchwork)
 
 # Histogram of coverage by presence/absence
 p1 = ggplot(community_coverage, aes(x = pct_species_with_traits)) +
@@ -187,7 +200,7 @@ p4 = ggplot(community_coverage, aes(x = n_species, y = pct_cover_with_traits)) +
 # Combine plots
 p_combined = (p1 | p2) / (p3 | p4)
 
-pdf("plot/trait_coverage_assessment.pdf", width = 12, height = 10)
+pdf(here("Calanda_JSDM", "plot", "trait_coverage_assessment.pdf"), width = 12, height = 10)
 print(p_combined)
 dev.off()
 
@@ -198,11 +211,7 @@ cat("\n- plot/trait_coverage_assessment.pdf: Visualization of trait coverage\n")
 # ==============================================================================
 cat("\n=== Checking for bias in variance components ===\n")
 
-# Extract variance components from JSDM results
-if(!exists("res")) {
-  cat("\nLoading JSDM results...\n")
-  load("output/starter_data_25.04.25.RData")
-}
+# Extract variance components from JSDM results (res loaded from RData above)
 
 variance_data = res$internals$Sites %>%
   as.data.frame() %>%
@@ -385,8 +394,8 @@ test_results = data.frame(
   )
 
 # Save combined data
-write_csv(combined, "output/community_coverage_variance.csv")
-write_csv(summary_stats, "output/coverage_bias_summary.csv")
+write_csv(combined, here("Calanda_JSDM", "output", "community_coverage_variance.csv"))
+write_csv(summary_stats, here("Calanda_JSDM", "output", "coverage_bias_summary.csv"))
 
 cat("\n- output/community_coverage_variance.csv: Combined coverage and variance data\n")
 cat("- output/coverage_bias_summary.csv: Summary statistics by coverage group\n")
@@ -475,7 +484,7 @@ p_violin_prop = ggplot(plot_data_long, aes(x = coverage_group, y = prop_value, f
 # Combine bias plots
 p_bias_combined = p_violin_raw / p_violin_prop
 
-pdf("plot/trait_coverage_bias.pdf", width = 12, height = 8)
+pdf(here("Calanda_JSDM", "plot", "trait_coverage_bias.pdf"), width = 12, height = 8)
 print(p_bias_combined)
 dev.off()
 
@@ -665,8 +674,8 @@ print(summary_stats_species)
 # Save species data
 write_csv(species_variance %>%
             mutate(has_traits = species %in% species_with_data),
-          "output/species_variance_trait_status.csv")
-write_csv(summary_stats_species, "output/species_bias_summary.csv")
+          here("Calanda_JSDM", "output", "species_variance_trait_status.csv"))
+write_csv(summary_stats_species, here("Calanda_JSDM", "output", "species_bias_summary.csv"))
 
 cat("\n- output/species_variance_trait_status.csv: Species variance with trait status\n")
 cat("- output/species_bias_summary.csv: Summary statistics by species group\n")
@@ -755,7 +764,7 @@ p_sp_violin_prop = ggplot(plot_data_species_long, aes(x = trait_group, y = prop_
 # Combine species bias plots
 p_sp_bias_combined = p_sp_violin_raw / p_sp_violin_prop
 
-pdf("plot/species_trait_coverage_bias.pdf", width = 12, height = 8)
+pdf(here("Calanda_JSDM", "plot", "species_trait_coverage_bias.pdf"), width = 12, height = 8)
 print(p_sp_bias_combined)
 dev.off()
 
