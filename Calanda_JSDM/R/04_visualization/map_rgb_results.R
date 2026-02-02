@@ -1,35 +1,53 @@
 # ==============================================================================
-# MAP RGB RESULTS ON CALANDA MOUNTAIN
+# Script: map_rgb_results.R
+# Purpose: RGB visualizations of JSDM variance components projected onto
+#          Calanda mountain DEM using rayshader
+#
+# Inputs:
+#   - output/starter_data_25.04.25.RData (veg.env, veg)
+#   - results_from_Max/res_sjsdm_calanda.rds
+#   - output/calanda_mask.shp
+#   - output/metrics/dem.tif
+#
+# Outputs:
+#   - plot/ternary_plot_variance_components.pdf
+#   - plot/calanda_rgb_3d.png
+#   - plot/calanda_rgb_2d_map.pdf
+#   - plot/rgb_legend.pdf
+#   - plot/calanda_dem_contour_rgb.pdf
 # ==============================================================================
-# This script creates RGB visualizations of JSDM variance components
-# (Environment, Space, Species associations) and projects them onto
-# the Calanda mountain DEM using rayshader
 
-# Load required libraries ----
 library(tidyverse)
+library(conflicted)
 library(sf)
 library(terra)
-library(raster)  # Important: use raster package for raster_to_matrix
+library(raster)
 library(rayshader)
 library(ggtern)
 library(elevatr)
 library(tidyterra)
 library(here)
-setwd(here("Calanda_JSDM"))
+
+conflict_prefer("select", "dplyr")
+conflict_prefer("filter", "dplyr")
 # ==============================================================================
 # LOAD DATA
 # ==============================================================================
 cat("\n=== Loading JSDM results ===\n")
 
 # Load JSDM results with variance components
-load("output/starter_data_25.04.25.RData")
-res = readRDS("results_from_Max/res_sjsdm_calanda.rds")
+load(here("Calanda_JSDM", "output", "starter_data_25.04.25.RData"))
+res = readRDS(here("Calanda_JSDM", "results_from_Max", "res_sjsdm_calanda.rds"))
+
+# Rename dotted objects from RData to snake_case
+veg_env = veg.env
+rm(veg.env)
 
 # Extract sites with variance components and coordinates
 sites =
   res$internals$Sites %>%
   rownames_to_column("plot_id_releve") %>%
-  left_join(veg.env %>% as.data.frame() %>% rownames_to_column("plot_id_releve")) %>%
+  left_join(veg_env %>% as.data.frame() %>% rownames_to_column("plot_id_releve")) %>%
   left_join(veg %>% select(plot_id_releve, open_close) %>% distinct()) %>%
   select(plot_id_releve, env, spa, codist, Longitude, Latitude, open_close)
 
@@ -91,7 +109,7 @@ p_ternary = ggtern(sites, aes(x = env_prop, y = codist_prop, z = spa_prop)) +
   )
 
 # Save ternary plot
-pdf("plot/ternary_plot_variance_components.pdf", height = 8, width = 10)
+pdf(here("Calanda_JSDM", "plot", "ternary_plot_variance_components.pdf"), height = 8, width = 10)
 print(p_ternary)
 dev.off()
 
@@ -109,7 +127,7 @@ sites_sf = sites %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
 
 # Load Calanda mask
-calanda_mask = st_read("output/calanda_mask.shp")
+calanda_mask = st_read(here("Calanda_JSDM", "output", "calanda_mask.shp"))
 
 # Get elevation raster using elevatr (like the working example)
 # z parameter controls resolution: higher = better resolution but slower
@@ -165,7 +183,7 @@ cat("Data preparation complete\n")
 # ==============================================================================
 cat("\n=== Creating 3D visualization ===\n")
 
-if(!file.exists("plot/calanda_rgb_3d.png")) {
+if (!file.exists(here("Calanda_JSDM", "plot", "calanda_rgb_3d.png"))) {
 
   # Create the 3D plot
   calanda_elevation_matrix %>%
@@ -222,7 +240,7 @@ if(!file.exists("plot/calanda_rgb_3d.png")) {
   render_compass(position = "E", compass_radius = 80)
 
   # Save snapshot
-  render_snapshot("plot/calanda_rgb_3d.png", clear = TRUE)
+  render_snapshot(here("Calanda_JSDM", "plot", "calanda_rgb_3d.png"), clear = TRUE)
 
   cat("3D visualization saved to: plot/calanda_rgb_3d.png\n")
 } else {
@@ -246,14 +264,14 @@ p_map = ggplot() +
     x = "Longitude",
     y = "Latitude"
   ) +
-  theme_minimal() +
+  theme_bw() +
   theme(
     text = element_text(size = 12),
     legend.position = "none"
   )
 
 # Save 2D map
-pdf("plot/calanda_rgb_2d_map.pdf", height = 10, width = 12)
+pdf(here("Calanda_JSDM", "plot", "calanda_rgb_2d_map.pdf"), height = 10, width = 12)
 print(p_map)
 dev.off()
 
@@ -283,11 +301,11 @@ p_legend = ggplot(legend_grid, aes(x = env, y = spa)) +
     title = "RGB Color Legend",
     subtitle = "Species associations fixed at 0.5"
   ) +
-  theme_minimal() +
+  theme_bw() +
   theme(text = element_text(size = 12))
 
 # Save legend
-pdf("plot/rgb_legend.pdf", height = 6, width = 7)
+pdf(here("Calanda_JSDM", "plot", "rgb_legend.pdf"), height = 6, width = 7)
 print(p_legend)
 dev.off()
 
@@ -299,7 +317,7 @@ cat("Legend saved to: plot/rgb_legend.pdf\n")
 cat("\n=== Creating 2D contour plot with DEM ===\n")
 
 # Load original DEM
-dem_original = rast("output/metrics/dem.tif")
+dem_original = rast(here("Calanda_JSDM", "output", "metrics", "dem.tif"))
 
 # Crop to Calanda mask extent
 dem_cropped = crop(dem_original, calanda_mask)
@@ -324,14 +342,14 @@ p_contour = ggplot() +
     x = "Longitude",
     y = "Latitude"
   ) +
-  theme_minimal() +
+  theme_bw() +
   theme(
     text = element_text(size = 12),
     legend.position = "right"
   )
 
 # Save contour plot
-pdf("plot/calanda_dem_contour_rgb.pdf", height = 10, width = 14)
+pdf(here("Calanda_JSDM", "plot", "calanda_dem_contour_rgb.pdf"), height = 10, width = 14)
 print(p_contour)
 dev.off()
 
