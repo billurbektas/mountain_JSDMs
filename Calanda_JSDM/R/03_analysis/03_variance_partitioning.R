@@ -14,7 +14,7 @@
 #   - plot/ternary_species.pdf
 #
 # Requires: R/00_setup/functions_calanda.R (plot_tern_sites, plot_tern_species,
-#           plot.anova.custom)
+#           plot_anova_custom)
 # ==============================================================================
 
 library(tidyverse)
@@ -25,6 +25,9 @@ source(here("Calanda_JSDM", "R", "00_setup", "functions_calanda.R"))
 
 # Load data ----
 load(here("Calanda_JSDM", "output", "starter_data_25.04.25.RData"))
+# Rename dotted objects from RData to snake_case
+veg_clim = veg.clim
+rm(veg.clim)
 an = readRDS(here("Calanda_JSDM", "results_from_Max", "an_sjsdm_calanda.rds"))
 model_jsdm = readRDS(here("Calanda_JSDM", "results_from_Max", "model_sjsdm_calanda.rds"))
 environment(model_jsdm$get_model)$device = "cpu"
@@ -42,12 +45,12 @@ color_env = "#81caf3"     # Blue for environment
 
 # Venn diagram ----
 pdf(file = "plot/venn.pdf", height = 8, width = 8)
-p_venn = plot.anova.custom(an)
+p_venn = plot_anova_custom(an)
 dev.off()
 
 # Species altitude ranges ----
 cat("Calculating species altitude ranges...\n")
-species_altitude_ranges = veg.clim %>%
+species_altitude_ranges = veg_clim %>%
   select(plot_id_releve, altitude) %>%
   distinct() %>%
   left_join(
@@ -67,7 +70,7 @@ species_altitude_ranges = veg.clim %>%
 # Ternary plots ----
 p1 = plot_tern_sites(
   res = res,
-  veg.clim = veg.clim,
+  veg_clim = veg_clim,
   color_env = color_env,
   color_codist = color_codist,
   color_spa = color_spa
@@ -76,7 +79,7 @@ p1 = plot_tern_sites(
 p2 = plot_tern_species(
   res = res,
   veg = veg,
-  veg.clim = veg.clim,
+  veg_clim = veg_clim,
   color_env = color_env,
   color_codist = color_codist,
   color_spa = color_spa
