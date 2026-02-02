@@ -1,95 +1,49 @@
-library(sjSDM)
-library(tidyverse)
-library(terra)
-library(TNRS)
-library(stringi)
-library(sf)
-library(ggpubr)
-library(FactoMineR)
-library(factoextra)
-library(corrplot)
-library(gt)
-library(gridExtra)
-library(grid)
-library(conflicted)
-library(miceRanger)
-library(patchwork)
-library(ggrepel)
-library(spatialEco)
-library(randomForest)
-library(caret)
-library(mvabund)
-library(tidyverse)
-library(sf)
-library(terra)
-library(tidyterra)
-#library(ggtern) ## doesnt work. 
-library(patchwork)
-library(factoextra)
-library(FactoMineR)
-library(qgam)
-library(mvabund)
+# ==============================================================================
+# Script: 00_workflow.R
+# Purpose: Coordinator script — sources all pipeline scripts in order.
+#          Each script is self-contained (loads its own libraries and data).
+#
+# Usage:  source(here("Calanda_JSDM", "R", "00_setup", "00_workflow.R"))
+#
+# Note:   Step 2 (model fitting) requires GPU and is slow. By default it is
+#         skipped because authoritative results live in results_from_Max/.
+#         Set run_model = TRUE below to re-fit.
+# ==============================================================================
+
 library(here)
-library(ggforce)
-library(ggrepel)
 
-conflict_prefer("filter", "dplyr")
-conflict_prefer("select", "dplyr")
-conflict_prefer("aes", "ggplot2")
-conflict_prefer("extract", "terra")
-conflict_prefer("year", "lubridate")
-conflict_prefer("first", "dplyr")
-conflict_prefer("intersect", "base")
-conflict_prefer("theme_minimal", "ggplot2")
-conflict_prefer("theme_bw", "ggplot2")
-conflict_prefer("shift", "terra")
-conflict_prefer("margin", "ggplot2")
-conflicts_prefer(ggplot2::theme_classic)
+# Configuration ----
+run_model = FALSE   # Set TRUE to re-fit the sjSDM model (GPU required)
 
-setwd("Calanda_JSDM/")
-source("R/functions_calanda.R")
+# ==============================================================================
+# 1. Data preparation
+# ==============================================================================
+cat("\n========== STEP 1: Data preparation ==========\n")
+source(here("Calanda_JSDM", "R", "01_data_prep", "01_prepare_data.R"))
+source(here("Calanda_JSDM", "R", "01_data_prep", "01_prepare_trait_data.R"))
+source(here("Calanda_JSDM", "R", "01_data_prep", "assess_trait_coverage.R"))
 
-# Load data
-load("data/vegetation/TransPlantNetwork_101024.RData")
-load("output/starter_data_25.04.25.RData")
-#https://github.com/TheoreticalEcology/s-jSDM
-#https://cran.r-project.org/web/packages/sjSDM/vignettes/sjSDM_Introduction.html
+# ==============================================================================
+# 2. Model fitting (optional — uses results_from_Max/ by default)
+# ==============================================================================
+if (run_model) {
+  cat("\n========== STEP 2: Model fitting ==========\n")
+  source(here("Calanda_JSDM", "R", "02_model", "02_jsdm.R"))
+}
 
-# Unset any existing Python configurations
-# Sys.unsetenv("RETICULATE_PYTHON")
-# 
-# # Load libraries in order
-# library(reticulate)
-# use_condaenv("r-sjsdm", required = TRUE)
-# library(sjSDM)
+# ==============================================================================
+# 3. Post-model analysis
+# ==============================================================================
+cat("\n========== STEP 3: Analysis ==========\n")
+source(here("Calanda_JSDM", "R", "03_analysis", "03_variance_partitioning.R"))
+source(here("Calanda_JSDM", "R", "03_analysis", "05_community_postJSDM.R"))
+source(here("Calanda_JSDM", "R", "03_analysis", "06_species_postJSDM.R"))
 
-# Protocol of the CapHE data: "/Volumes/green_groups_PLEC_public/Research/Calanda/2024_CAPHE/CAPHE_SpeciesDistribution/CAPHE_SpeDis_Documents/CAPHE_SpeDis_Methods/2023_CAPHE_Methods_20240207.docx"
+# ==============================================================================
+# 4. Visualization
+# ==============================================================================
+cat("\n========== STEP 4: Visualization ==========\n")
+source(here("Calanda_JSDM", "R", "04_visualization", "map.R"))
+source(here("Calanda_JSDM", "R", "04_visualization", "map_rgb_results.R"))
 
-# reticulate::py_config()
-# reticulate::py_install("scikit-multilearn", pip = TRUE)
-# sklearn = reticulate::import("skmultilearn")
-
-
-veg_coord = read_csv("data/vegetation/2024_CAPHE_SpeDis_CleanData_20240214.csv")%>%
-  select(plot_id, releve_id, x, y )%>%
-  distinct()
-write_csv(veg_coord, file = "data/vegetation/veg.coord.csv")
-# Get coordinates data for downloads
-veg_coord = read_csv("data/vegetation/veg.coord.csv")[,-1]
-
-veg_coord_ecostress = 
-  veg_coord %>%
-  mutate(ID = paste0(plot_id, "_", releve_id))%>%
-  rename(Longitude = x, Latitude = y)%>%
-  dplyr::select(ID, Latitude, Longitude)
-write.csv(veg_coord_ecostress, file = "data/veg_coord_ecostress.csv")
-
-# Get functions
-source("R/functions_calanda.R")
-
-
-# Workflow
-if(file.exists("output/starter_data_25.04.25.RData")){
-  load("output/starter_data_25.04.25.RData")
-}else{source("R/01_prepare_data.R")}
-
+cat("\n========== WORKFLOW COMPLETE ==========\n")
