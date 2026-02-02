@@ -1,0 +1,574 @@
+# Get vegetation surveys in Calanda
+veg = read_csv("data/vegetation/2024_CAPHE_SpeDis_CleanData_20240214.csv") %>%
+  mutate(plot_id_releve = paste0(plot_id, releve_id)) %>%
+  mutate(across(starts_with("soil_depth"), ~ as.numeric(.))) %>% # Ensure all soil_depth columns are numeric
+  rowwise() %>% 
+  mutate(soil_depth_mean = mean(c_across(starts_with("soil_depth")), na.rm = TRUE)) %>%
+  mutate(soil_depth_var = var(c_across(starts_with("soil_depth")), na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(southness = abs(aspect - 180)) %>%
+  mutate(altitude = rowMeans(select(., altitude_max, altitude_min), na.rm = TRUE)) %>%
+  dplyr::select(-altitude_min, -altitude_max) %>%
+  dplyr::select(plot_id_releve, x, y, slope, southness, trees_cover, shrubs_cover, rocks_cover, soil_depth_mean, soil_depth_var, open_close, taxon_global, species_cover, altitude) %>%
+  distinct() %>%
+  rename(Latitude = y, Longitude = x)%>%
+  mutate(taxon_global = stri_trans_general(taxon_global, "Latin-ASCII"))
+
+cat(length(unique(veg$taxon_global)), "species and", length(unique(veg$plot_id_releve)), "plots.")
+
+if(file.exists("output/veg.clim.csv")){
+  veg.clim = 
+    read_csv("output/veg.clim.csv")%>%
+    select(-`...1`)%>%
+    #left_join(veg %>% select(plot_id_releve, open_close))%>%
+    #filter(open_close == "open", trees_cover==0)%>%
+    filter(fdd>-1000)%>%
+    distinct()
+}else{
+# Get Calanda limits
+if(file.exists("output/calanda_mask.shp")){
+  calanda_mask = st_read("output/calanda_mask.shp")
+
+calanda_1 = st_read("data/mask/study_region_2024.shp")
+calanda_1 = st_transform(calanda_1, crs = "EPSG:4326")
+
+calanda_2 = st_read("data/mask/study_region.shp")
+calanda_2 = st_transform(calanda_2, crs = "EPSG:4326")
+common_cols = intersect(names(calanda_1), names(calanda_2))
+calanda_1 = calanda_1[, common_cols]
+calanda_2 = calanda_2[, common_cols]
+calanda_combined = rbind(calanda_1, calanda_2)
+calanda_dissolved = st_union(calanda_combined)
+calanda_mask = st_cast(st_make_valid(calanda_dissolved), "POLYGON")
+
+st_write(
+  obj = calanda_mask,                    
+  dsn = "output/calanda_mask.shp",   
+  driver = "ESRI Shapefile", 
+  append = FALSE
+)
+}
+#plot(st_geometry(calanda_mask), border = "black", lwd = 2, main = "Merged Polygon without Internal Lines")
+# Calculate topography ----
+
+if(dir.exists("output/metrics")){
+  topo = extract_topography(
+    topo_raster_dir = "output/metrics", 
+    veg_coords_path = "data/vegetation/veg.coord.csv"
+  )
+}else{
+topo = process_swissalti3d_microtopo(
+  csv_file = "data/ch.swisstopo.swissalti3d-HJOyAIjH.csv",
+  mask_shapefile = NULL,
+  output_dir = "output",
+  cut_left = 5,     # Cut 5% from left edge
+  cut_right = 18,   # Cut 10% from right edge
+  cut_top = 2,      # Cut 2% from top edge
+  cut_bottom = 16   # Cut 15% from bottom edge
+)
+
+topo = extract_topography(
+  topo_raster_dir = "output/metrics", 
+  veg_coords_path = "data/vegetation/veg.coord.csv"
+)
+}
+
+# Assess which data to select from microtopography ----
+print(corrplot(cor(as.matrix(topo %>% select(-c(plot_id, releve_id, x, y, dem))%>% na.omit())), method = "number", type = "lower", number.cex = 0.6))
+res.pca = PCA(topo %>% select(c(flowdir, tpi, roughness))%>% na.omit(), scale.unit = TRUE)
+
+p1 = fviz_pca_biplot(res.pca, 
+                     repel = TRUE,
+                     label = "var",
+                     col.var = "black", # Variables color
+                     col.ind = topo %>% na.omit() %>% pull(dem))+
+  labs(color = "Altitude")+
+  scale_color_viridis_c(option = "turbo")+
+  theme(legend.position = "bottom",
+        legend.key.size = unit(1, "cm"))
+p1
+# I select TPI, flowdir and roughness!
+topo = 
+  topo %>%
+  mutate(plot_id_releve = paste0(plot_id,releve_id))%>%
+  select(plot_id_releve, flowdir, tpi, roughness)
+
+# Process snow data from Copernicus ----
+if(file.exists("output/snow_metrics.csv")){
+  snow_metrics = read_csv("output/snow_metrics.csv")[,-1]
+}else{
+snow = 
+  process_gfsc_data(
+  copernicus_dir = "data/wekeo",
+  output_dir = "output",
+  veg_coords_path = "data/vegetation/veg.coord.csv",
+  calanda_mask_path = "output/calanda_mask.shp",
+  force_reprocess = FALSE
+)
+
+snow = read_csv("output/gf_vegetation_data.csv")%>%
+  filter(!is.na(raster_value))%>%
+  filter(!(raster_value >100))
+
+processed_snow = process_snow_data(
+  raw_snow_df = snow,
+  expand_time_series = TRUE
+)
+  
+snow_metrics = calculate_snow_metrics(processed_snow) 
+write.csv(snow_metrics, file = "output/snow_metrics.csv")
+}
+
+snow_metrics =
+  snow_metrics %>%
+  mutate(plot_id_releve = paste0(plot_id, releve_id))%>%
+  select(plot_id_releve, year, snow_sum, snow_disappearance_doy)
+
+# Get land surface temperature from ECOSTRESS
+## The slight problem with this data is that it is not "daily average" because they are measured only once.
+## However, all the points in our site are measured at the same hour of the day so there should be no bias.
+### We calculate: summer temperature + freezing degree days after snow melt until summer?
+lst = bind_rows(read_csv("data/ecostress/Calanda-LST-02-2019-ECO-L2T-LSTE-002-results.csv"),
+                read_csv("data/ecostress/Calanda-LST-02-2023-ECO-L2T-LSTE-002-results.csv")
+                )%>%
+  filter(ECO_L2T_LSTE_002_QC_Data_quality_flag_Description=="Good quality L1B data")%>%
+  select(Category, Latitude, Longitude, Date, ECO_L2T_LSTE_002_LST)%>%
+  rename(lst = ECO_L2T_LSTE_002_LST)%>%
+  mutate(lst = lst -273.15)%>% # Kelvin to Celcius
+  distinct()%>%
+  rename(plot_id_releve = Category)%>%
+  mutate(year = year(Date))%>%
+  filter(!year %in% c(2019, 2025))%>%
+  select(-year)
+
+processed_temp =
+  process_temperature_data(
+  raw_temp_df = lst,
+  temp_col = "lst",  # Column with temperature values
+  expand_time_series = TRUE
+)
+
+temp_metrics = calculate_temp_metrics(processed_temp)
+
+ggplot(processed_temp %>% filter(plot_id_releve == "23.OID2979726") , aes(doy, temp_interpolated))+
+  geom_line()+
+  facet_grid(~year)+
+  geom_line(data = processed_temp %>% filter(plot_id_releve == "23.OID2979726"), aes(doy, temp_raw),
+            color = "grey50")+
+  geom_vline(xintercept = c(151, 95))
+
+# Calculate fdd between snow disseappearance and the first day when the temperatures = 1°C
+## if the first day temperature == 1°C is earlier than snow diseappearance than by default fdd = 0
+fdd = 
+  left_join(temp_metrics, snow_metrics)%>%
+  filter(!year %in% c(2019, 2025))%>%
+  mutate(snow_disappearance_doy = ifelse(is.na(snow_disappearance_doy), 1, snow_disappearance_doy))%>% # no snow
+  left_join(processed_temp %>% select(plot_id_releve, year, doy, temp_interpolated))%>%
+  filter(snow_disappearance_doy < spring_warming_doy) %>%
+  group_by(plot_id_releve, Latitude, Longitude, year) %>%
+  filter(doy <= spring_warming_doy & doy >= snow_disappearance_doy) %>%
+  filter(temp_interpolated < 0) %>%
+  summarize(fdd = sum(temp_interpolated), .groups = "drop") %>%
+  mutate(fdd = ifelse(is.na(fdd), 0, fdd))%>%
+  group_by(plot_id_releve, Latitude, Longitude)%>%
+  summarize(fdd = mean(fdd, na.rm = TRUE))%>%
+  ungroup()%>%
+  select(plot_id_releve, fdd)%>%
+  distinct()
+
+# Get mean across years
+snow_metrics = 
+  snow_metrics %>%
+  group_by(plot_id_releve)%>%
+  summarize(snow_sum = mean(snow_sum, na.rm = TRUE))
+
+temp_metrics = 
+  temp_metrics %>%
+  group_by(plot_id_releve)%>%
+  summarize(summer_temp = mean(summer_temp, na.rm = TRUE))
+
+# Get the evapotranspiration from the MODIS data 
+### Summer evapotranspiration ~ summer drought
+### the summer ET and annual ET are very correlated. I am just taking the annual ET.
+ety =  bind_rows(read_csv("data/modis/Calanda-ET-MODIS-Yearly-2-MOD16A3GF-061-results.csv"),
+                read_csv("data/modis/Calanda-MODIS-ET-Yearly-MOD16A3GF-061-results.csv"))%>%
+  mutate(year = year(Date))%>%
+  select(Category, ID, Latitude, Longitude, year, MOD16A3GF_061_ET_500m)%>%
+  rename(et.annual = MOD16A3GF_061_ET_500m)%>%
+  mutate(et.annual = ifelse(et.annual>6000, NA, et.annual))%>%
+  rename(plot_id_releve = Category)%>%
+  select(-ID)%>%
+  #replace_with_closest_site_data(.)%>%
+  group_by(plot_id_releve, Latitude, Longitude)%>%
+  summarize(et.annual = mean(et.annual, na.rm = TRUE))%>%
+  mutate(Latitude = round(Latitude, 5),
+         Longitude = round(Longitude, 5)) %>%
+  ungroup()%>%
+  select(plot_id_releve, et.annual)%>%
+  distinct()%>%
+  filter(!is.nan(et.annual))
+
+# Get land-use intensity ----
+# First run - processes and saves the raster
+# land_use = extract_mowing_events(
+#   raster_pattern = "grassland-use_intensity_.*\\.tif$",
+#   coords_path = NULL,
+#   raster_dir = "data/land_use",
+#   processed_raster_path = "output/land_use.tif"
+# )
+
+# Use the cached raster to extract points
+# land_use = extract_mowing_events(
+#   raster_pattern = "grassland-use_intensity_.*\\.tif$",
+#   coords_path = "data/vegetation/veg.coord.csv",
+#   output_path = "output/mowing_events_at_veg_points.csv",
+#   raster_dir = "data/land_use",
+#   processed_raster_path = "output/land_use.tif"
+# )
+# 
+# land_use = 
+#   land_use %>%
+#   mutate(plot_id_releve = paste0(plot_id, releve_id))%>%
+#   rename(Latitude = y, Longitude = x)%>%
+#   pivot_longer(cols = mowingEvents_2018:mowingEvents_2020)%>%
+#   group_by(plot_id_releve, Latitude, Longitude)%>%
+#   summarize(land_use = round(mean(value, na.rm = TRUE)))%>%
+#   mutate(land_use = ifelse(is.nan(land_use), NA, land_use))%>%
+#   ungroup()%>%
+#   select(plot_id_releve, land_use)%>%
+#   distinct()
+#  
+# grazing_indicators = process_community_traits()
+# 
+# grazing_indicators = left_join(grazing_indicators$community_traits, grazing_indicators$veg.abund)
+# 
+# grazing_indicators = left_join(grazing_indicators, land_use)
+# 
+# grazing_indicators = grazing_indicators %>% rename(nardus_abundance = `Nardus stricta`)
+# grazing_indicators = grazing_indicators %>% mutate(land_use = factor(land_use, levels = c(0, 1, 2)))
+# grazing_indicators = grazing_indicators %>% 
+#   mutate(land_use = factor(land_use, 
+#                            levels = c(0, 1, 2),
+#                            labels = c("L0", "L1", "L2")))%>%
+#   left_join()
+
+# Get climate data and reproject
+# clim = rast(list.files("data/climate", full.names = TRUE))
+# crs(clim) = "EPSG:2056"
+# clim = project(clim, "EPSG:4326")
+# cropped_clim = crop(clim, ext(vect(calanda_mask)))
+# cropped_clim_df = 
+#   as.data.frame(cropped_clim, xy = TRUE, na.rm = TRUE)%>%
+#   pivot_longer(cols = AI_8110_LV95:gdd5Y_8110_LV95)%>%
+#   mutate(name = str_extract(name, "^[^_]+"))
+
+# veg.clim = 
+#   veg %>%
+#   dplyr::select(plot_releve_id, x, y)%>%
+#   vect(., geom = c("x", "y"), crs = "EPSG:4326")%>%
+#   terra::extract(clim, ., xy = FALSE, ID = FALSE)%>%
+#   rename_with(~ str_extract(., "^[^_]+"))%>%
+#   bind_cols(veg %>% dplyr::select(plot_releve_id, altitude, slope, southness, trees_cover, shrubs_cover, rocks_cover, soil_depth_mean, soil_depth_var))
+# 
+# veg.climx =
+#   veg.clim %>% 
+#   distinct()%>%
+#   na.omit()
+
+veg.clim = 
+  veg %>% 
+  filter(plot_id_releve != "dupl_108.OID2979333")%>%
+  select(plot_id_releve, Latitude, Longitude, altitude, slope, southness, trees_cover, shrubs_cover, rocks_cover, soil_depth_mean, soil_depth_var)%>%
+  mutate(Latitude = round(Latitude, 3),
+         Longitude = round(Longitude, 3))%>%
+  distinct()%>%
+  left_join(ety)%>%
+  left_join(snow_metrics)%>%
+  left_join(fdd)%>%
+  left_join(temp_metrics)%>%
+  #left_join(land_use)%>%
+  left_join(topo)%>%
+  mutate(across(everything(), ~if_else(is.nan(.), NA, .)))%>%
+  mutate(fdd = ifelse((is.na(fdd) & !is.na(summer_temp)), 0, fdd ))
+
+imp.clim = 
+impute_environmental_data(
+  veg.clim,
+  variables_to_impute = c("et.annual", "soil_depth_mean", "soil_depth_var"),
+  m = 20,
+  maxiter = 50,
+  num.trees = 500,
+  seed = 123,
+  validation_fraction = 0.3
+)
+
+veg.clim %>%
+  summarise(across(everything(), ~mean(is.na(.)) * 100)) %>%
+  pivot_longer(cols = everything(), 
+               names_to = "variable", 
+               values_to = "percent_missing") %>%
+  arrange(desc(percent_missing))%>%
+  right_join(imp.clim$performance) %>%
+  mutate(percent_missing = round(percent_missing),
+         r_squared = round(r_squared, 2))%>%
+  select(variable, percent_missing, r_squared)%>%
+  gt()
+
+veg.clim = 
+  imp.clim$imputed_data %>%
+  select(plot_id_releve, Latitude, Longitude, altitude, slope, summer_temp, fdd, et.annual_final,
+         soil_depth_mean_final, soil_depth_var_final, trees_cover, shrubs_cover, rocks_cover,
+         flowdir, tpi, roughness, snow_sum)%>%
+  rename_with(~str_remove(., "_final$"), ends_with("_final"))%>%
+  filter(!is.na(slope))%>%
+  filter(!is.na(altitude))
+  
+write.csv(veg.clim, file = "output/veg.clim.csv")
+}
+
+veg = 
+  veg %>%
+  rename(species = taxon_global)%>%
+  filter(!is.na(word(species, 2))) #Take out genus
+
+cat("Genus taken out:", length(unique(veg$species)), "species and", length(unique(veg$plot_id_releve)), "plots.")
+
+veg.comm = veg %>% 
+  #filter(plot_id_releve %in% veg.clim$plot_id_releve)%>%
+  select(plot_id_releve, species_cover, species)%>%
+  rename(cover = species_cover)%>%
+  distinct()%>%
+  filter(!is.na(species))%>%
+  mutate(cover = ifelse(is.na(cover), 0.001, cover))%>% #there are species that are super low abundance like one leaf.
+  group_by(plot_id_releve, species)%>%
+  summarize(cover = sum(cover))%>%
+  group_by(plot_id_releve)%>%
+  mutate(total_cover = sum(cover))%>%
+  group_by(plot_id_releve, species)%>%
+  mutate(rel_cover = cover/total_cover)%>%
+  group_by(plot_id_releve)%>%
+  mutate(total_cover = sum(rel_cover))%>% # Check if all sums up to 0
+  select(-total_cover, -cover)%>%
+  ungroup()
+
+veg.PA = 
+  veg.comm %>%
+  mutate(rel_cover = ifelse(rel_cover>0, 1, 0))%>%
+  pivot_wider(names_from = species, values_from = rel_cover, values_fill = 0)%>%
+  column_to_rownames(var = "plot_id_releve")
+
+veg.rare = 
+  veg.PA%>%
+  summarise(across(everything(), ~sum(., na.rm = TRUE)))%>%
+  pivot_longer(cols = everything())%>%
+  filter(value<nrow(veg.PA)*0.01)%>%
+  pull(name)
+
+veg.PA = 
+  veg.comm %>%
+  filter(!species %in% veg.rare)%>%
+  mutate(rel_cover = ifelse(rel_cover>0, 1, 0))%>%
+  pivot_wider(names_from = species, values_from = rel_cover, values_fill = 0)%>%
+  column_to_rownames(var = "plot_id_releve")
+
+cat("Rare species taken out:", ncol(veg.PA), "species and", nrow(veg.PA), "plots.")
+
+veg.abund = 
+  veg.comm %>%
+  filter(!species %in% veg.rare)%>%
+  mutate(rel_cover = rel_cover)%>%
+  group_by(plot_id_releve)%>%
+  mutate(tot_rel_cover = sum(rel_cover))%>%
+  filter(tot_rel_cover>=0.8)%>%
+  select(-tot_rel_cover)%>%
+  pivot_wider(names_from = species, values_from = rel_cover, values_fill = 0)
+
+cat("Plots with less than 80% cover taken out:", ncol(veg.abund)-1, "species and", length(unique(veg.abund$plot_id_releve)), "plots.")
+
+veg.abund = 
+  veg.abund %>% filter(plot_id_releve %in% veg.clim$plot_id_releve) %>%
+  column_to_rownames(var = "plot_id_releve")
+
+cat("Plots with missing climate info taken out:", ncol(veg.abund), "species and", nrow(veg.abund), "plots.")
+
+Y = as.matrix(veg.PA[rownames(veg.abund), ])
+View(as.data.frame(colSums(Y)))
+
+if(file.exists("output/traits.csv")){
+  traits = read_csv("output/traits.csv")
+}else{
+  try = read_csv("data/traits/try.quantitative_traits_2025-03-17.csv")
+  indicators = read_csv("data/traits/indicators_cleaned_calanda_2025-03-17.csv")
+  dispersal = read_csv("data/traits/dispersal_cleaned_calanda_2025-03-17.csv")
+  
+  traits =
+    try %>%
+    filter(Trait %in% c("N_percent", "LDMC", "vegetative_height", "SLA", "LA", "C_percent", "seed_mass"))%>%
+    mutate(species = ifelse(species == "Vaccinium uliginosum subsp. uliginosum", "Vaccinium uliginosum", species))%>%
+    filter(species %in% colnames(Y))%>%
+    filter(!is.na(Value), !is.na(Trait))%>%
+    filter(!Climate_code %in% c("Af", "Am", "Aw", "BWh", "BWk", "BSh", "BSk"))%>%
+    group_by(species, species_TNRS, Trait)%>%
+    summarize(Mean = mean(Value, na.rm = TRUE),
+              Var = var(Value, na.rm = TRUE),
+              .groups = "drop")%>%
+    pivot_wider(names_from = Trait,
+                values_from = c(Mean, Var),
+                names_glue = "{.value}_{Trait}")%>%
+    ungroup()
+  
+  traits =
+    left_join(dispersal %>% select(-`...1`), traits)%>%
+    left_join(indicators %>% select(-`...1`))%>%
+    select(species, species_TNRS,
+           Mean_seed_mass, Var_seed_mass, dispersal_distance_class,
+           Mean_LA, Var_LA, Mean_SLA, Var_SLA, Mean_LDMC, Var_LDMC,
+           Mean_vegetative_height, Var_vegetative_height,
+           Mean_N_percent, Var_N_percent, Mean_C_percent, Var_C_percent,
+           Light, Moisture, Nutrients, Disturbance.Severity
+    )%>%
+    rename(disturbance = Disturbance.Severity,
+           dispersal = dispersal_distance_class)
+
+  imp.traits = impute_functional_traits(
+    traits,
+    variables_to_impute = c("Mean_seed_mass", "dispersal", "Mean_LA", "Mean_SLA", "Mean_LDMC",
+                            "Mean_vegetative_height", "Mean_N_percent", "Mean_C_percent",
+                            "Light", "Moisture", "Nutrients", "disturbance"),
+    m = 30,
+    maxiter = 100,
+    num.trees = 500,
+    seed = 123,
+    validation_fraction = 0.3
+  )
+  
+  traits %>%
+    summarise(across(everything(), ~mean(is.na(.)) * 100)) %>%
+    pivot_longer(cols = everything(), 
+                 names_to = "variable", 
+                 values_to = "percent_missing") %>%
+    arrange(desc(percent_missing)) %>%
+    right_join(imp.traits$performance) %>%
+    mutate(percent_missing = round(percent_missing),
+           r_squared = round(r_squared, 2)) %>%
+    select(variable, percent_missing, r_squared) %>%
+    gt()
+  
+  traits =
+    imp.traits$imputed_data %>%
+    select(species, species_TNRS, starts_with("Var_"), contains("_final"))%>%
+    rename_with(~str_remove(., "_final$"), ends_with("_final"))
+  write.csv(traits, file = "output/traits.csv")
+}
+
+community_traits =
+  calculate_community_traits(
+    community_data = veg.abund,  
+    traits_data = traits,           
+    species_col = "species",         
+    abundance_col = "rel_cover",
+    trait_cols = c("Mean_LDMC", "Nutrients", "Mean_SLA")
+  )
+
+# Create a PCA for land-use ----
+res.pca = left_join(community_traits %>% select(plot_id_releve, Nutrients_cwm, Mean_LDMC_cwm, Mean_SLA_cwm),
+                    veg.abund %>% rownames_to_column(var = "plot_id_releve")%>% select(plot_id_releve, `Nardus stricta`))%>%
+  column_to_rownames(var = "plot_id_releve")
+
+res.pca = PCA(res.pca, scale.unit = TRUE)
+
+pdf("plot/land_use_variable.pdf", height = 8, width = 8)
+fviz_pca_biplot(res.pca, 
+                repel = TRUE,
+                label = "var",
+                col.var = "black",
+                col.ind = "grey70")+
+  theme(legend.position = "bottom",
+        legend.key.size = unit(1, "cm"))
+dev.off()
+
+land.use = data.frame(land_use = res.pca$ind$coord[,"Dim.1", drop = TRUE])%>%
+  rownames_to_column(var = "plot_id_releve")
+
+veg.clim = 
+  veg.clim %>%
+  left_join(land.use)%>%
+  na.omit()
+
+veg.env = 
+  veg.clim %>% 
+  group_by(plot_id_releve, Longitude, Latitude, altitude)%>%
+  summarize(across(slope:land_use, ~mean(.)))%>%
+  ungroup()%>%
+  column_to_rownames(var = "plot_id_releve")%>%
+  na.omit(.)%>%
+  mutate(across(Longitude:land_use, ~as.numeric(scale(.))))
+
+res.pca = PCA(veg.clim %>% 
+                filter(plot_id_releve %in% rownames(veg.env))%>%
+                select(-c(plot_id_releve, Latitude, Longitude, altitude, trees_cover, snow_sum, shrubs_cover)), scale.unit = TRUE)
+
+# Plot using ggplot2
+pdf("plot/climate_calanda_surveys.pdf", height = 10, width = 15)
+print(veg.clim %>% 
+        filter(plot_id_releve %in% rownames(veg.env))%>%
+        dplyr::select(-c(plot_id_releve))%>%
+        pivot_longer(cols = everything()) %>%
+        group_by(name) %>%
+        mutate(median_value = median(value, na.rm = TRUE)) %>%
+        ggplot(aes(value)) +
+        facet_wrap(. ~ name, scales = "free") +
+        theme_minimal() +
+        geom_histogram(fill = "skyblue") +
+        geom_vline(aes(xintercept = median_value), color = "red", linetype = "dashed", size = 0.8) +
+        labs(x = "Values across all plots (611 plots - when NAs omitted)"))
+
+p1 = fviz_pca_biplot(res.pca, 
+                     repel = TRUE,
+                     label = "var",
+                     col.var = "black", # Variables color
+                     col.ind = veg.clim$altitude)+
+  labs(color = "Altitude")+
+  scale_color_viridis_c(option = "turbo")+
+  theme(legend.position = "bottom",
+        legend.key.size = unit(1, "cm"))
+
+p2 = fviz_pca_biplot(res.pca, 
+                     axes = c(2,3),
+                     repel = TRUE,
+                     label = "var",
+                     col.var = "black", # Variables color
+                     col.ind = veg.clim %>% pull(altitude))+
+  labs(color = "Altitude")+
+  scale_color_viridis_c(option = "turbo")+
+  theme(legend.position = "bottom",
+        legend.key.size = unit(1, "cm"))
+
+print(p1+p2)
+
+print(corrplot(cor(as.matrix(veg.clim %>% select(-c(plot_id_releve, Latitude, Longitude, trees_cover)))), method = "number", type = "lower", number.cex = 0.6))
+
+dev.off()
+
+X = veg.env
+
+plots = intersect(rownames(Y), rownames(X))
+Y = Y[plots, ]
+X = X[plots, ]
+cat("Final", ncol(veg.abund), "species and", length(unique(veg.abund$plot_id_releve)), "plots.")
+
+data_calanda_jsdm <- list()
+data_calanda_jsdm$X <- X
+data_calanda_jsdm$Y <-Y
+#saveRDS(data_calanda_jsdm, file = "Calanda_JSDM_Max_Dec25/data_calanda_jsdm.rds")
+
+# lambda.env = 0.001
+# alpha.env = 1.0
+# lambda.sp = 0.002
+# alpha.sp = 0.2
+# lambda.bio = 0.001
+# alpha.bio = 1.0
+
+#save.image("output/starter_data_25.04.25.RData")
+#calanda_sp_list = colnames(veg.PA)
+#saveRDS(calanda_sp_list, file = "output/calanda_sp_list.RDS")
