@@ -47,3 +47,15 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Other projects
+TransPlant_JSDM/
+
+# Calanda data and outputs
+Calanda_JSDM/R/output/
+Calanda_JSDM/R/plot/
+Calanda_JSDM/R/data/
+Calanda_JSDM/R/docs/
+
+# OS files
+.DS_Store

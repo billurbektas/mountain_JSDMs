@@ -1,0 +1,14 @@
+# Data and outputs
+output/
+plot/
+data/
+docs/
+TransPlant_JSDM/
+
+# OS files
+.DS_Store
+
+# R artifacts
+.Rhistory
+.RData
+.Rproj.user/
