@@ -1,4 +1,29 @@
 # ==============================================================================
+# Script: 06_species_postJSDM.R
+# Purpose: Species-level environmental effect sizes on co-distribution variance
+#
+# Inputs:
+#   - results_from_Max/model_sjsdm_calanda.rds
+#   - results_from_Max/res_sjsdm_calanda.rds
+#   - R/00_setup/functions_calanda.R (label_env_var)
+#
+# Outputs:
+#   - plot/species_regressions.pdf
+# ==============================================================================
+
+library(tidyverse)
+library(sjSDM)
+library(ggrepel)
+library(here)
+
+source(here("Calanda_JSDM", "R", "00_setup", "functions_calanda.R"))
+
+# Load data ----
+model_jsdm = readRDS(here("Calanda_JSDM", "results_from_Max", "model_sjsdm_calanda.rds"))
+environment(model_jsdm$get_model)$device = "cpu"
+res = readRDS(here("Calanda_JSDM", "results_from_Max", "res_sjsdm_calanda.rds"))
+
+# ==============================================================================
 # SPECIES-LEVEL ENVIRONMENTAL EFFECT SIZES POST-JSDM
 # ==============================================================================
 cat("\n=== Species-level environmental effects analysis ===\n")
@@ -27,7 +52,7 @@ remove_outliers = function(data, var) {
   Q1 = quantile(data[[var]], 0.001)
   Q3 = quantile(data[[var]], 0.999)
   IQR_val = Q3 - Q1
-  data %>% filter(!!sym(var) >= Q1 - 1.5*IQR_val & !!sym(var) <= Q3 + 1.5*IQR_val)
+  data %>% filter(!!sym(var) >= Q1 - 1.5 * IQR_val & !!sym(var) <= Q3 + 1.5 * IQR_val)
 }
 
 regression_data_clean = regression_data %>%
@@ -36,19 +61,8 @@ regression_data_clean = regression_data %>%
 
 cat(sprintf("After outlier removal: %d species\n", nrow(regression_data_clean)))
 
-# Helper: label environmental variables
-label_env_var = function(var) {
-  case_when(
-    var == "summer_temp" ~ "Summer temperature",
-    var == "et.annual" ~ "Annual evapotranspiration",
-    var == "fdd" ~ "Freezing degree days",
-    var == "land_use" ~ "Land use intensity",
-    TRUE ~ var
-  )
-}
-
 # Fit models with stepwise selection
-env_vars = c("summer_temp", "fdd", "et.annual", "land_use")
+env_vars = c("summer_temp", "fdd", "et_annual", "land_use")
 available_vars = env_vars[env_vars %in% names(regression_data_clean)]
 
 cat(sprintf("\nPredictors: %s\n", paste(available_vars, collapse = ", ")))
@@ -76,15 +90,15 @@ predict_model = function(model, env_var, data) {
   linear = env_var
   quad = paste0("I(", env_var, "^2)")
 
-  if(!linear %in% rownames(coef_summary) && !quad %in% rownames(coef_summary)) return(NULL)
+  if (!linear %in% rownames(coef_summary) && !quad %in% rownames(coef_summary)) return(NULL)
 
   beta_seq = seq(min(data[[env_var]]), max(data[[env_var]]), length.out = 100)
-  pred = coef(model)[1]  # Intercept
+  pred = coef(model)[1]
 
-  if(linear %in% rownames(coef_summary)) {
+  if (linear %in% rownames(coef_summary)) {
     pred = pred + coef(model)[linear] * beta_seq
   }
-  if(quad %in% rownames(coef_summary)) {
+  if (quad %in% rownames(coef_summary)) {
     pred = pred + coef(model)[quad] * beta_seq^2
   }
 
@@ -101,7 +115,7 @@ predict_model = function(model, env_var, data) {
 predictions = bind_rows(lapply(names(models), function(m) {
   bind_rows(lapply(available_vars, function(v) {
     pred = predict_model(models[[m]], v, regression_data_clean)
-    if(is.null(pred)) return(NULL)
+    if (is.null(pred)) return(NULL)
     pred$model = m
     pred
   }))
@@ -109,9 +123,7 @@ predictions = bind_rows(lapply(names(models), function(m) {
   separate(model, c("variance", "type"), sep = "_") %>%
   mutate(
     model_type = ifelse(type == "prop", "Dominance", "Raw"),
-    env_variable_label = factor(label_env_var(env_var),
-                                levels = c("Summer temperature", "Annual evapotranspiration",
-                                          "Freezing degree days", "Land use intensity"))
+    env_variable_label = label_env_var(env_var)
   )
 
 # Filter significant combinations
@@ -123,11 +135,10 @@ sig_combos = predictions %>%
 # Prepare plot data
 plot_data = regression_data_clean %>%
   pivot_longer(c(codist, codist_prop), names_to = "measure", values_to = "value") %>%
-  pivot_longer(available_vars, names_to = "env_var", values_to = "beta") %>%
+  pivot_longer(all_of(available_vars), names_to = "env_var", values_to = "beta") %>%
   mutate(
     model_type = ifelse(grepl("prop", measure), "Dominance", "Raw"),
-    env_variable_label = factor(label_env_var(env_var),
-                                levels = levels(sig_combos$env_variable_label))
+    env_variable_label = label_env_var(env_var)
   ) %>%
   semi_join(sig_combos %>% select(env_variable_label, model_type) %>% distinct(),
             by = c("env_variable_label", "model_type"))
@@ -139,7 +150,7 @@ extract_coefs = function(model_name) {
     rownames_to_column("term") %>%
     filter(term != "(Intercept)")
 
-  if(nrow(coefs) == 0) {
+  if (nrow(coefs) == 0) {
     return(data.frame(base_var = character(), var_type = character(),
                      estimate = numeric(), lower_ci = numeric(),
                      upper_ci = numeric(), significant = logical(),
@@ -151,7 +162,7 @@ extract_coefs = function(model_name) {
       base_var = case_when(
         grepl("summer_temp", term) ~ "summer_temp",
         grepl("fdd", term) ~ "fdd",
-        grepl("et.annual", term) ~ "et.annual",
+        grepl("et_annual", term) ~ "et_annual",
         grepl("land_use", term) ~ "land_use"
       ),
       var_type = as.character(ifelse(grepl("\\^2|I\\(", term), "Q", "L")),
@@ -168,9 +179,7 @@ effect_labels = bind_rows(lapply(names(models), extract_coefs)) %>%
   separate(model, c("variance", "type"), sep = "_") %>%
   mutate(
     model_type = ifelse(type == "prop", "Dominance", "Raw"),
-    env_variable_label = factor(label_env_var(base_var),
-                                levels = c("Summer temperature", "Annual evapotranspiration",
-                                          "Freezing degree days", "Land use intensity"))
+    env_variable_label = label_env_var(base_var)
   ) %>%
   semi_join(sig_combos %>% select(env_variable_label, model_type) %>% distinct(),
             by = c("env_variable_label", "model_type")) %>%
@@ -216,7 +225,9 @@ p_species = ggplot() +
         strip.text = element_text(size = 13, face = "bold"),
         legend.position = "bottom")
 
-pdf("plot/species_regressions.pdf", width = 10, height = 6)
+pdf(here("Calanda_JSDM", "plot", "species_regressions.pdf"), width = 10, height = 6)
 print(p_species)
 dev.off()
 cat("Species-level scatter plots created\n")
+
+cat("\n=== Species-level analysis complete ===\n")

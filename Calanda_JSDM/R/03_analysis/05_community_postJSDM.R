@@ -1,4 +1,31 @@
 # ==============================================================================
+# Script: 05_community_postJSDM.R
+# Purpose: Community-level environmental regressions on variance components
+#
+# Inputs:
+#   - output/starter_data_25.04.25.RData (res, veg.env)
+#   - R/00_setup/functions_calanda.R (label_env_var)
+#
+# Outputs:
+#   - plot/community_regressions.pdf
+#   - plot/spatial_topography_regressions.pdf
+# ==============================================================================
+
+library(tidyverse)
+library(ggrepel)
+library(here)
+
+source(here("Calanda_JSDM", "R", "00_setup", "functions_calanda.R"))
+
+# Load data ----
+load(here("Calanda_JSDM", "output", "starter_data_25.04.25.RData"))
+res = readRDS(here("Calanda_JSDM", "results_from_Max", "res_sjsdm_calanda.rds"))
+
+# Rename dotted objects from RData to snake_case
+veg_env = veg.env
+rm(veg.env)
+
+# ==============================================================================
 # COMMUNITY-LEVEL ENVIRONMENTAL EFFECTS POST-JSDM
 # ==============================================================================
 cat("\n=== Community-level environmental effects analysis ===\n")
@@ -6,8 +33,8 @@ cat("\n=== Community-level environmental effects analysis ===\n")
 # Prepare regression data with proportions
 regression_data = res$internals$Sites %>%
   rownames_to_column("plot_id_releve") %>%
-  left_join(veg.env %>% as.data.frame() %>% rownames_to_column("plot_id_releve")) %>%
-  select(plot_id_releve, env, codist, spa, summer_temp, fdd, et.annual, land_use) %>%
+  left_join(veg_env %>% as.data.frame() %>% rownames_to_column("plot_id_releve")) %>%
+  select(plot_id_releve, env, codist, spa, summer_temp, fdd, et_annual, land_use) %>%
   drop_na() %>%
   mutate(
     total = env + codist + spa,
@@ -21,29 +48,18 @@ cat(sprintf("\nSites with complete data: %d\n", nrow(regression_data)))
 # Fit all models with stepwise AIC selection
 models = list(
   env_prop = step(lm(env_prop ~ summer_temp + I(summer_temp^2) + fdd + I(fdd^2) +
-                              et.annual + I(et.annual^2) + land_use + I(land_use^2),
+                              et_annual + I(et_annual^2) + land_use + I(land_use^2),
                     data = regression_data), direction = "backward", trace = 0),
   codist_prop = step(lm(codist_prop ~ summer_temp + I(summer_temp^2) + fdd + I(fdd^2) +
-                                   et.annual + I(et.annual^2) + land_use + I(land_use^2),
+                                   et_annual + I(et_annual^2) + land_use + I(land_use^2),
                        data = regression_data), direction = "backward", trace = 0),
   env_raw = step(lm(env ~ summer_temp + I(summer_temp^2) + fdd + I(fdd^2) +
-                       et.annual + I(et.annual^2) + land_use + I(land_use^2),
+                       et_annual + I(et_annual^2) + land_use + I(land_use^2),
                    data = regression_data), direction = "backward", trace = 0),
   codist_raw = step(lm(codist ~ summer_temp + I(summer_temp^2) + fdd + I(fdd^2) +
-                             et.annual + I(et.annual^2) + land_use + I(land_use^2),
+                             et_annual + I(et_annual^2) + land_use + I(land_use^2),
                       data = regression_data), direction = "backward", trace = 0)
 )
-
-# Helper: label environmental variables
-label_env_var = function(var) {
-  factor(case_when(
-    var == "summer_temp" ~ "Summer temperature",
-    var == "fdd" ~ "Freezing degree days",
-    var == "et.annual" ~ "Annual evapotranspiration",
-    var == "land_use" ~ "Land use intensity"
-  ), levels = c("Summer temperature", "Annual evapotranspiration",
-                "Freezing degree days", "Land use intensity"))
-}
 
 # Helper: generate predictions for a model
 predict_model = function(model, env_var, data) {
@@ -51,12 +67,12 @@ predict_model = function(model, env_var, data) {
   linear = env_var
   quad = paste0("I(", env_var, "^2)")
 
-  if(!linear %in% rownames(coef_summary) && !quad %in% rownames(coef_summary)) return(NULL)
+  if (!linear %in% rownames(coef_summary) && !quad %in% rownames(coef_summary)) return(NULL)
 
   pred_df = data.frame(
     summer_temp = mean(data$summer_temp),
     fdd = mean(data$fdd),
-    et.annual = mean(data$et.annual),
+    et_annual = mean(data$et_annual),
     land_use = mean(data$land_use)
   )[rep(1, 100), ]
 
@@ -70,11 +86,11 @@ predict_model = function(model, env_var, data) {
 }
 
 # Generate all predictions
-env_vars = c("summer_temp", "fdd", "et.annual", "land_use")
+env_vars = c("summer_temp", "fdd", "et_annual", "land_use")
 predictions = bind_rows(lapply(names(models), function(m) {
   bind_rows(lapply(env_vars, function(v) {
     pred = predict_model(models[[m]], v, regression_data)
-    if(is.null(pred)) return(NULL)
+    if (is.null(pred)) return(NULL)
     pred$model = m
     pred
   }))
@@ -95,7 +111,7 @@ sig_combos = predictions %>%
 # Prepare plot data
 plot_data = regression_data %>%
   pivot_longer(c(env_prop, codist_prop, env, codist), names_to = "measure", values_to = "value") %>%
-  pivot_longer(env_vars, names_to = "env_var", values_to = "env_value") %>%
+  pivot_longer(all_of(env_vars), names_to = "env_var", values_to = "env_value") %>%
   mutate(
     variance_type = ifelse(grepl("env", measure), "Environment", "Species associations"),
     model_type = ifelse(grepl("prop", measure), "Dominance", "Raw"),
@@ -112,7 +128,7 @@ extract_coefs = function(model_name) {
     rownames_to_column("term") %>%
     filter(term != "(Intercept)")
 
-  if(nrow(coefs) == 0) {
+  if (nrow(coefs) == 0) {
     return(data.frame(base_var = character(), var_type = character(),
                      estimate = numeric(), lower_ci = numeric(),
                      upper_ci = numeric(), significant = logical(),
@@ -124,7 +140,7 @@ extract_coefs = function(model_name) {
       base_var = case_when(
         grepl("summer_temp", term) ~ "summer_temp",
         grepl("fdd", term) ~ "fdd",
-        grepl("et.annual", term) ~ "et.annual",
+        grepl("et_annual", term) ~ "et_annual",
         grepl("land_use", term) ~ "land_use"
       ),
       var_type = as.character(ifelse(grepl("\\^2|I\\(", term), "Q", "L")),
@@ -192,7 +208,7 @@ p_community = ggplot() +
         strip.text = element_text(size = 11, face = "bold"),
         legend.position = "bottom")
 
-pdf("plot/community_regressions.pdf", width = 10, height = 6)
+pdf(here("Calanda_JSDM", "plot", "community_regressions.pdf"), width = 10, height = 6)
 print(p_community)
 dev.off()
 cat("Community-level scatter plots created\n")
@@ -205,7 +221,7 @@ cat("\n=== Spatial variance vs topography analysis ===\n")
 # Prepare spatial regression data with topography
 regression_data_spa = res$internals$Sites %>%
   rownames_to_column("plot_id_releve") %>%
-  left_join(veg.env %>% as.data.frame() %>% rownames_to_column("plot_id_releve")) %>%
+  left_join(veg_env %>% as.data.frame() %>% rownames_to_column("plot_id_releve")) %>%
   select(plot_id_releve, env, codist, spa, slope, tpi, roughness) %>%
   drop_na() %>%
   mutate(
@@ -240,7 +256,7 @@ predict_topo_model = function(model, topo_var, data) {
   linear = topo_var
   quad = paste0("I(", topo_var, "^2)")
 
-  if(!linear %in% rownames(coef_summary) && !quad %in% rownames(coef_summary)) return(NULL)
+  if (!linear %in% rownames(coef_summary) && !quad %in% rownames(coef_summary)) return(NULL)
 
   pred_df = data.frame(
     slope = mean(data$slope),
@@ -262,7 +278,7 @@ topo_vars = c("slope", "tpi", "roughness")
 predictions_spa = bind_rows(lapply(names(models_spa), function(m) {
   bind_rows(lapply(topo_vars, function(v) {
     pred = predict_topo_model(models_spa[[m]], v, regression_data_spa)
-    if(is.null(pred)) return(NULL)
+    if (is.null(pred)) return(NULL)
     pred$model = m
     pred
   }))
@@ -276,10 +292,10 @@ predictions_spa = bind_rows(lapply(names(models_spa), function(m) {
 # Keep all predictions (both significant and non-significant)
 plot_combos_spa = predictions_spa
 
-# Prepare plot data (include all, not just significant)
+# Prepare plot data
 plot_data_spa = regression_data_spa %>%
   pivot_longer(c(spa_prop, spa), names_to = "measure", values_to = "value") %>%
-  pivot_longer(topo_vars, names_to = "topo_var", values_to = "topo_value") %>%
+  pivot_longer(all_of(topo_vars), names_to = "topo_var", values_to = "topo_value") %>%
   mutate(
     model_type = ifelse(grepl("prop", measure), "Dominance", "Raw"),
     topo_variable_label = label_topo_var(topo_var)
@@ -292,7 +308,7 @@ extract_topo_coefs = function(model_name) {
     rownames_to_column("term") %>%
     filter(term != "(Intercept)")
 
-  if(nrow(coefs) == 0) {
+  if (nrow(coefs) == 0) {
     return(data.frame(base_var = character(), var_type = character(),
                      estimate = numeric(), lower_ci = numeric(),
                      upper_ci = numeric(), significant = logical(),
@@ -341,7 +357,7 @@ model_pos_spa = plot_combos_spa %>%
   group_by(topo_variable_label, model_type) %>%
   summarize(x_pos = max(x), y_pos = y[which.max(x)], .groups = "drop")
 
-# Plot - show all relationships, with non-significant in grey
+# Plot
 p_spatial = ggplot() +
   geom_point(data = plot_data_spa, aes(x = topo_value, y = value),
              alpha = 0.3, size = 0.3, color = "grey60") +
@@ -371,7 +387,9 @@ p_spatial = ggplot() +
         strip.text = element_text(size = 11, face = "bold"),
         legend.position = "bottom")
 
-pdf("plot/spatial_topography_regressions.pdf", width = 10, height = 6)
+pdf(here("Calanda_JSDM", "plot", "spatial_topography_regressions.pdf"), width = 10, height = 6)
 print(p_spatial)
 dev.off()
 cat("Spatial-topography scatter plots created\n")
+
+cat("\n=== Community-level analysis complete ===\n")
