@@ -1,51 +1,8 @@
-# Calanda JSDM - R Scripts Workflow
+# Calanda JSDM - Workflow
 
-## Overview
+Joint Species Distribution Model (JSDM) analysis of alpine vegetation in the Calanda region, Switzerland. The workflow processes vegetation survey data, remote-sensing environmental variables, and functional traits to fit a spatial JSDM and analyze variance components.
 
-Joint Species Distribution Model (JSDM) analysis of alpine vegetation in the Calanda region, Switzerland. The workflow processes vegetation survey data, environmental variables, and functional traits to fit spatial JSDMs and analyze variance components.
-
-Model outputs used for analysis come from `results_from_Max/` (authoritative model results).
-
----
-
-## Coding Conventions
-
-### Data passing: File-based
-
-Every script loads its own inputs from saved files and saves its outputs. No script depends on another having been run in the same R session. This makes scripts self-contained and reproducible.
-
-### Naming conventions
-
-| Element | Convention | Example |
-|---------|-----------|---------|
-| **Objects / variables** | `snake_case` with `_` | `veg_clim`, `snow_metrics`, `species_betas` |
-| **Functions** | `snake_case` with `_` | `process_snow_data()`, `calculate_temp_metrics()` |
-| **File names** | `snake_case` with `_`, numbered prefix | `01_prepare_data.R`, `03_variance_partitioning.R` |
-| **Column names** | `snake_case` with `_` | `plot_id_releve`, `summer_temp`, `et_annual` |
-| **Constants / colors** | `snake_case` with `_` | `color_env`, `color_spa` |
-
-**No dots in names.** Dots in R names (e.g., `veg.clim`) can be confused with S3 method dispatch. All existing dotted names will be renamed to underscores during cleanup:
-- `veg.clim` → `veg_clim`
-- `veg.env` → `veg_env`
-- `veg.PA` → `veg_pa`
-- `veg.abund` → `veg_abund`
-- `veg.comm` → `veg_comm`
-- `veg.rare` → `veg_rare`
-- `imp.clim` → `imp_clim`
-- `imp.traits` → `imp_traits`
-- `et.annual` → `et_annual` (column name)
-- `res.pca` → `pca_result`
-
-### Other style rules
-
-- Assignment: `=` (not `<-`)
-- Booleans: `TRUE` / `FALSE` (not `T` / `F`)
-- CSV I/O: `read_csv()` / `write_csv()` (tidyverse, not base R)
-- Paths: `here::here()` (not `setwd()`)
-- Plots: `theme_bw()` as default theme
-- Libraries: each script loads its own (file-based approach)
-- No `library(ggplot2)` when `library(tidyverse)` is already loaded
-- No `View()` calls (fails non-interactively)
+Authoritative model results come from `results_from_Max/` (GPU-fitted). Analysis and visualization scripts load from there.
 
 ---
 
@@ -54,229 +11,397 @@ Every script loads its own inputs from saved files and saves its outputs. No scr
 ```
 R/
 ├── 00_setup/
-│   ├── 00_workflow.R              # Coordinator: loads libraries, sets paths
-│   └── functions_calanda.R        # Helper functions (sourced by other scripts)
+│   ├── 00_workflow.R              # Coordinator: sources all scripts in order
+│   └── functions_calanda.R        # Shared helper functions
 │
 ├── 01_data_prep/
-│   ├── 01_prepare_data.R          # Environmental data pipeline (topo, snow, LST, ET)
-│   ├── 01_prepare_trait_data.R    # Trait processing (N/C isotopes, LMA, LDMC, PCA)
-│   └── assess_trait_coverage.R    # QA: trait coverage per community + bias assessment
+│   ├── 01_prepare_data.R          # Environmental data pipeline
+│   ├── 02_prepare_trait_data.R    # Trait processing (isotopes, LMA, LDMC, PCA)
+│   └── 03_assess_trait_coverage.R # QA: trait coverage + bias assessment
 │
 ├── 02_model/
-│   └── 02_jsdm.R                  # Fits sjSDM model (GPU-accelerated)
+│   └── 04_jsdm.R                  # Fits sjSDM model (GPU required)
 │
 ├── 03_analysis/
-│   ├── 03_variance_partitioning.R # Venn diagram + ternary plots
-│   ├── 05_community_postJSDM.R    # Environmental regressions on variance components
-│   └── 06_species_postJSDM.R      # Species-level coefficient analysis
+│   ├── 05_variance_partitioning.R # Venn diagram + ternary plots
+│   ├── 06_community_postJSDM.R    # Community-level environmental regressions
+│   └── 07_species_postJSDM.R      # Species-level coefficient analysis
 │
 ├── 04_visualization/
-│   ├── map.R                      # Geographic maps of study area
-│   └── map_rgb_results.R          # 3D DEM with RGB variance coloring
+│   ├── 08_map.R                   # Study area maps
+│   └── 09_map_rgb_results.R       # 3D DEM with RGB variance coloring
 │
-└── archive/                       # Deprecated / external scripts
+└── archive/                       # Deprecated scripts
 ```
 
 ---
 
 ## Execution Order
 
+Run `00_workflow.R` to execute the full pipeline, or source scripts individually:
+
 ```r
-# 1. Data preparation (each script is self-contained)
+# Step 1: Data preparation
 source("R/01_data_prep/01_prepare_data.R")
-source("R/01_data_prep/01_prepare_trait_data.R")
-source("R/01_data_prep/assess_trait_coverage.R")
+source("R/01_data_prep/02_prepare_trait_data.R")
+source("R/01_data_prep/03_assess_trait_coverage.R")
 
-# 2. Model fitting (GPU required) -- or use results_from_Max/
-source("R/02_model/02_jsdm.R")
+# Step 2: Model fitting (GPU required) -- or use results_from_Max/
+source("R/02_model/04_jsdm.R")
 
-# 3. Post-model analysis (loads from results_from_Max/ and output/)
-source("R/03_analysis/03_variance_partitioning.R")
-source("R/03_analysis/05_community_postJSDM.R")
-source("R/03_analysis/06_species_postJSDM.R")
+# Step 3: Post-model analysis
+source("R/03_analysis/05_variance_partitioning.R")
+source("R/03_analysis/06_community_postJSDM.R")
+source("R/03_analysis/07_species_postJSDM.R")
 
-# 4. Visualization
-source("R/04_visualization/map.R")
-source("R/04_visualization/map_rgb_results.R")
+# Step 4: Visualization
+source("R/04_visualization/08_map.R")
+source("R/04_visualization/09_map_rgb_results.R")
 ```
 
 ---
 
-## Key Data Flow
+## Scripts
+
+### `00_setup/functions_calanda.R`
+
+Shared helper functions sourced by other scripts. Not run directly.
+
+| Function | What it does | Key library |
+|----------|-------------|-------------|
+| `process_gfsc_data()` | Extracts Copernicus snow cover from ZIP archives, applies BISE correction, spline interpolation, and Savitzky-Golay smoothing | `terra::rast()`, `terra::extract()`, `zoo::rollapply()`, `zoo::na.spline()`, `signal::sgolayfilt()` |
+| `calculate_snow_metrics()` | Computes snow disappearance date and snow-cover days from smoothed time series | — |
+| `calculate_temp_metrics()` | Computes summer temperature and spring warming date from ECOSTRESS LST | — |
+| `impute_environmental_data()` | Random-forest imputation of missing environmental variables | `miceRanger::miceRanger()` |
+| `impute_functional_traits()` | Random-forest imputation of missing trait values using nearest-neighbour distances | `miceRanger::miceRanger()`, `sf::st_distance()` |
+| `extract_mowing_events()` | Extracts grassland-use intensity from raster time series | `terra::rast()`, `terra::writeRaster()` |
+| `calculate_cwm()` | Computes community-weighted mean traits | — |
+| `plot_anova_custom()` | Draws Venn diagram of variance partitioning | — |
+| `plot_tern_species()` / `plot_tern_sites()` | Ternary plots of variance components colored by altitude | `ggrepel::geom_text_repel()` |
+| `label_env_var()` | Formats environmental variable names for plot labels | — |
+
+---
+
+### `01_data_prep/01_prepare_data.R`
+
+Builds the environmental matrix (X) and species matrix (Y) for the JSDM.
+
+**What it does:** Loads raw vegetation surveys, processes remote-sensing variables (Copernicus snow, ECOSTRESS LST, MODIS ET, SwissALTI3D topography), computes derived variables (freezing degree days, snow metrics, temperature metrics), imputes missing values, creates a land-use proxy via PCA on community-weighted mean traits, scales and assembles the final X and Y matrices.
+
+| Inputs | |
+|--------|--|
+| `data/vegetation/2024_CAPHE_SpeDis_CleanData_20240214.csv` | Vegetation survey data |
+| `data/vegetation/veg.coord.csv` | Plot coordinates |
+| `data/mask/study_region_2024.shp`, `data/mask/study_region.shp` | Study area boundaries |
+| `data/ecostress/*.csv` | ECOSTRESS land surface temperature |
+| `data/modis/*.csv` | MODIS evapotranspiration |
+| `data/wekeo/` | Copernicus GFSC snow cover ZIPs |
+| `data/traits/try.quantitative_traits_*.csv` | TRY trait data |
+| `data/traits/indicators_cleaned_calanda_*.csv` | Ecological indicator values |
+| `data/traits/dispersal_cleaned_calanda_*.csv` | Dispersal traits |
+
+| Outputs | |
+|---------|--|
+| `output/veg_clim.csv` | Merged vegetation + environmental data |
+| `output/traits.csv` | Processed trait data |
+| `output/starter_data_25.04.25.RData` | All R objects for downstream scripts |
+| `output/calanda_mask.shp` | Merged study area polygon |
+| `output/snow_metrics.csv` | Snow disappearance dates and cover days |
+| `plot/land_use_variable.pdf` | PCA biplot of land-use proxy |
+| `plot/climate_calanda_surveys.pdf` | Climate variable overview |
+
+| Key library usage | |
+|-------------------|--|
+| `sf::st_read()`, `sf::st_union()`, `sf::st_write()` | Read, merge, and write study area shapefiles |
+| `terra` (via helper functions) | Raster I/O for snow cover, topography |
+| `stringi::stri_trans_general()` | Transliterate species names from Latin to ASCII |
+| `miceRanger::miceRanger()` (via helpers) | Impute missing environmental and trait values |
+| `FactoMineR::PCA()` | PCA on topography, land-use proxy, and final environmental variables |
+| `factoextra::fviz_pca_biplot()` | PCA biplot visualization |
+| `corrplot::corrplot()` | Correlation matrices for variable selection |
+| `gt::gt()` | Render imputation performance tables |
+
+---
+
+### `01_data_prep/02_prepare_trait_data.R`
+
+Processes raw functional trait measurements into species-level summaries.
+
+**What it does:** Parses leaf N/C isotope data from Excel files, maps CN analysis IDs to plant IDs, merges with leaf area measurements, calculates derived traits (LMA, LDMC), validates data quality (weight errors, nutrient outliers), computes species-level means and coefficients of variation (kCV), runs PCA on mean traits and kCV values.
+
+| Inputs | |
+|--------|--|
+| `data/traits/N+C_Samples*.xls` | Isotope analysis results (multiple files) |
+| `data/traits/Trial*.xls` | Additional isotope runs |
+| `data/traits/2025_CAPHE_traits_sample_id.csv` | Sample ID mapping |
+| `data/traits/2025_TRAITS_clean_20251023.csv` | Cleaned trait measurements |
+| `data/traits/leaf_area.csv` | Scanned leaf areas |
+
+| Outputs | |
+|---------|--|
+| `output/species_trait_summary.csv` | Species-level trait means and kCV |
+| `output/final_traits_clean.csv` | Individual-level cleaned traits |
+| `output/all_traits_merged.csv` | All traits merged before cleaning |
+| `output/pca_means_eigenvalues.csv`, `output/pca_kcv_eigenvalues.csv` | PCA eigenvalues |
+| `output/pca_means_var_contrib.csv`, `output/pca_kcv_var_contrib.csv` | PCA variable contributions |
+| `plot/corrplot_all_traits.pdf` | Trait correlation matrix |
+| `plot/pca_trait_means_biplot.pdf` | PCA biplot of trait means |
+| `plot/pca_kcv_biplot.pdf` | PCA biplot of trait variability |
+
+| Key library usage | |
+|-------------------|--|
+| `readxl::read_excel()` | Parse multi-section Excel isotope data sheets |
+| `FactoMineR::PCA()` | PCA on species-level mean traits and kCV values |
+| `corrplot::corrplot()` | Correlation matrix of all traits |
+| `ggrepel::geom_text_repel()` | Non-overlapping species labels on PCA biplots |
+
+---
+
+### `01_data_prep/03_assess_trait_coverage.R`
+
+Quality assurance: tests whether trait-sampled communities are representative.
+
+**What it does:** Computes per-plot trait coverage (proportion of species with trait data weighted by abundance). Tests whether plots with high trait coverage differ systematically in JSDM variance components from the full dataset using t-tests, Wilcoxon tests, and Cramer-von Mises tests at both community and species levels.
+
+| Inputs | |
+|--------|--|
+| `output/species_trait_summary.csv` | Species-level trait summary |
+| `output/starter_data_25.04.25.RData` | Abundance matrix and JSDM results |
+
+| Outputs | |
+|---------|--|
+| `output/community_trait_coverage.csv` | Per-plot trait coverage |
+| `output/coverage_bias_summary.csv` | Bias test results (community level) |
+| `output/species_bias_summary.csv` | Bias test results (species level) |
+| `plot/trait_coverage_assessment.pdf` | Coverage diagnostic plots |
+| `plot/trait_coverage_bias.pdf` | Community-level bias plots |
+| `plot/species_trait_coverage_bias.pdf` | Species-level bias plots |
+
+| Key library usage | |
+|-------------------|--|
+| `dgof::cvm.test()` | Cramer-von Mises goodness-of-fit test on variance component distributions |
+| `patchwork` | Multi-panel plot composition |
+
+---
+
+### `02_model/04_jsdm.R`
+
+Fits the spatial joint species distribution model. **Requires GPU.**
+
+**What it does:** Defines a linear environmental predictor, a deep neural network for the spatial component (coordinates as input, 2 hidden layers of 30 units with SELU activation), and a biotic covariance structure. Fits the model with RMSprop optimizer and learning rate scheduling. Runs variance partitioning (R-squared, ANOVA, internal structure).
+
+| Inputs | |
+|--------|--|
+| `output/data_calanda_jsdm.rds` | Scaled X (environment + coordinates) and Y (species) matrices |
+
+| Outputs | |
+|---------|--|
+| `output/model_sjsdm_calanda.rds` | Fitted sjSDM model object |
+| `output/R2_sjsdm_calanda.rds` | Model R-squared |
+| `output/an_sjsdm_calanda.rds` | ANOVA variance partitioning |
+| `output/res_sjsdm_calanda.rds` | Site-level and species-level variance fractions |
+
+| Key library usage | |
+|-------------------|--|
+| `sjSDM::sjSDM()` | Fit the joint species distribution model |
+| `sjSDM::linear()` | Define environmental predictor with elastic-net regularization |
+| `sjSDM::DNN()` | Define deep neural network for spatial component |
+| `sjSDM::bioticStruct()` | Define species covariance structure |
+| `sjSDM::Rsquared()` | Compute model R-squared |
+| `sjSDM::anova()` | Partition variance across environment, space, and biotic components |
+| `sjSDM::internalStructure()` | Extract site-level and species-level variance fractions |
+
+---
+
+### `03_analysis/05_variance_partitioning.R`
+
+Visualizes the overall variance partitioning results.
+
+**What it does:** Creates a Venn diagram showing shared and unique variance explained by environment, species associations, and space. Creates ternary plots for both sites and species, colored by altitude.
+
+| Inputs | |
+|--------|--|
+| `output/starter_data_25.04.25.RData` | Plot metadata (altitude, coordinates) |
+| `results_from_Max/an_sjsdm_calanda.rds` | ANOVA results |
+| `results_from_Max/model_sjsdm_calanda.rds` | Fitted model |
+| `results_from_Max/res_sjsdm_calanda.rds` | Variance fractions |
+
+| Outputs | |
+|---------|--|
+| `plot/venn.pdf` | Venn diagram of variance partitioning |
+| `plot/ternary_sites.pdf` | Ternary plot of site-level variance |
+| `plot/ternary_species.pdf` | Ternary plot of species-level variance |
+
+| Key library usage | |
+|-------------------|--|
+| `sjSDM` | Loaded for class compatibility when reading model objects |
+| Custom `plot_anova_custom()` | Venn diagram from ANOVA results |
+| Custom `plot_tern_sites()` / `plot_tern_species()` | Ternary plots |
+
+---
+
+### `03_analysis/06_community_postJSDM.R`
+
+Tests what drives community-level variance components along environmental gradients.
+
+**What it does:** Regresses site-level variance proportions (environment, species associations) against environmental gradients (summer temperature, freezing degree days, ET, land use) using quadratic models with backward stepwise AIC selection. Separately regresses spatial variance against topographic variables (slope, TPI, roughness).
+
+| Inputs | |
+|--------|--|
+| `output/starter_data_25.04.25.RData` | Environmental data per site |
+| `results_from_Max/res_sjsdm_calanda.rds` | Site-level variance fractions |
+
+| Outputs | |
+|---------|--|
+| `plot/community_regressions.pdf` | Variance vs. environment scatter plots |
+| `plot/spatial_topography_regressions.pdf` | Spatial variance vs. topography |
+
+| Key library usage | |
+|-------------------|--|
+| `stats::step()` | Backward stepwise AIC model selection |
+| `ggrepel::geom_text_repel()` | Annotate effect sizes on plots |
+
+---
+
+### `03_analysis/07_species_postJSDM.R`
+
+Tests what drives species-level co-distribution variance.
+
+**What it does:** Extracts per-species environmental regression coefficients (betas) from the fitted sjSDM model. Regresses species-level co-distribution variance against those betas to test whether species with stronger environmental responses have higher or lower species-association variance. Uses stepwise AIC-selected quadratic models.
+
+| Inputs | |
+|--------|--|
+| `results_from_Max/model_sjsdm_calanda.rds` | Fitted model (for species betas) |
+| `results_from_Max/res_sjsdm_calanda.rds` | Species-level variance fractions |
+
+| Outputs | |
+|---------|--|
+| `plot/species_regressions.pdf` | Species variance vs. beta scatter plots |
+
+| Key library usage | |
+|-------------------|--|
+| `sjSDM::summary()` | Extract species-level environmental coefficients |
+| `stats::step()` | Backward stepwise AIC model selection |
+| `ggrepel::geom_text_repel()` | Annotate effect sizes on plots |
+
+---
+
+### `04_visualization/08_map.R`
+
+Study area maps.
+
+**What it does:** Creates an overview map of Switzerland highlighting the Calanda study region, and a zoomed map of vegetation survey points colored by altitude.
+
+| Inputs | |
+|--------|--|
+| `output/starter_data_25.04.25.RData` | Plot coordinates and altitude |
+| `output/calanda_mask.shp` | Study area polygon |
+
+| Outputs | |
+|---------|--|
+| `plot/map_calanda.pdf` | Overview + zoomed study area maps |
+
+| Key library usage | |
+|-------------------|--|
+| `rnaturalearth::ne_countries()` | Download Switzerland country boundary |
+| `sf::st_as_sf()` | Convert coordinates to spatial points |
+| `sf::st_bbox()` | Compute bounding box for zoom extent |
+
+---
+
+### `04_visualization/09_map_rgb_results.R`
+
+3D and 2D RGB visualizations of variance components on the landscape.
+
+**What it does:** Maps variance component proportions (environment, space, species associations) to RGB color channels (blue, red, green). Creates a ternary plot, a 3D rayshader rendering over the DEM with elevated RGB points and vertical stalks, a 2D map, an RGB color legend, and a DEM contour plot with overlaid RGB points.
+
+| Inputs | |
+|--------|--|
+| `output/starter_data_25.04.25.RData` | Plot coordinates and metadata |
+| `results_from_Max/res_sjsdm_calanda.rds` | Site-level variance fractions |
+| `output/calanda_mask.shp` | Study area polygon |
+| `output/metrics/dem.tif` | High-resolution DEM |
+
+| Outputs | |
+|---------|--|
+| `plot/ternary_plot_variance_components.pdf` | Ternary plot with habitat type |
+| `plot/calanda_rgb_3d.png` | 3D rayshader rendering |
+| `plot/calanda_rgb_2d_map.pdf` | 2D map with RGB points |
+| `plot/rgb_legend.pdf` | RGB color legend |
+| `plot/calanda_dem_contour_rgb.pdf` | DEM contour plot with RGB points |
+
+| Key library usage | |
+|-------------------|--|
+| `ggtern::ggtern()` | Ternary plot of variance proportions |
+| `elevatr::get_elev_raster()` | Download elevation raster tiles |
+| `rayshader::sphere_shade()`, `ray_shade()`, `ambient_shade()` | Compute surface textures and shadows |
+| `rayshader::plot_3d()` | Render 3D elevation surface |
+| `rayshader::render_points()` | Add RGB points above the terrain |
+| `rayshader::render_path()` | Draw vertical stalks from terrain to points |
+| `rayshader::render_snapshot()` | Save 3D scene as PNG |
+| `terra::rast()`, `terra::crop()`, `terra::aggregate()` | Load and process DEM raster |
+| `tidyterra::geom_spatraster()`, `geom_spatraster_contour()` | Plot raster and contours in ggplot |
+
+---
+
+## Data Flow
 
 ```
 Raw data (data/)
     │
-    ├── Vegetation surveys ──► 01_prepare_data.R ──► output/starter_data.RData
-    ├── Topography (SwissALTI3D)  ──┘                     │
-    ├── Snow (Copernicus)         ──┘                     │
-    ├── LST (ECOSTRESS)           ──┘                     │
-    └── ET (MODIS)                ──┘                     │
-                                                          ▼
-    Trait data (data/traits/) ──► 01_prepare_trait_data.R ──► output/species_trait_summary.csv
-                                                          │
-                                                          ▼
-                                      02_jsdm.R / results_from_Max/
-                                                          │
-                                                          ▼
-                                      03_analysis/ scripts ──► plot/ PDFs
+    ├── Vegetation surveys ──┐
+    ├── Topography (SwissALTI3D) ──┤
+    ├── Snow (Copernicus GFSC) ──┤
+    ├── LST (ECOSTRESS) ──┤        01_prepare_data.R
+    ├── ET (MODIS) ──┤                    │
+    └── Traits (TRY + field) ──┘          │
+                                          ▼
+                              output/starter_data_25.04.25.RData
+                              output/veg_clim.csv
+                                          │
+    Trait samples (data/traits/) ──► 02_prepare_trait_data.R
+                                          │
+                                          ▼
+                              output/species_trait_summary.csv
+                                          │
+                                          ▼
+                              03_assess_trait_coverage.R (QA)
+                                          │
+                                          ▼
+                              04_jsdm.R / results_from_Max/
+                                          │
+                              ┌───────────┼───────────┐
+                              ▼           ▼           ▼
+                      05_variance   06_community  07_species
+                      _partitioning _postJSDM     _postJSDM
+                              │           │           │
+                              └───────────┼───────────┘
+                                          ▼
+                                      plot/ PDFs
+                                          │
+                              ┌───────────┴───────────┐
+                              ▼                       ▼
+                        08_map.R           09_map_rgb_results.R
+                              │                       │
+                              ▼                       ▼
+                      plot/map_calanda.pdf    plot/calanda_rgb_*.pdf/png
 ```
 
 ---
 
-## Cleanup Plan: Step-by-Step
+## Coding Conventions
 
-After screening every active script, here is a comprehensive list of issues and tasks to address, organized script by script. We will work through these one at a time.
-
-### Required R packages (full audit)
-
-Each script will load only the packages it needs. Here is the full inventory:
-
-| Package | Used by | Notes |
-|---------|---------|-------|
-| `tidyverse` | all scripts | Core framework |
-| `sjSDM` | 02_jsdm, 03_variance_partitioning, 05/06_postJSDM | JSDM fitting & analysis |
-| `here` | all scripts | Project-relative paths |
-| `terra` | 01_prepare_data, map_rgb_results | Raster processing |
-| `sf` | 01_prepare_data, map, map_rgb_results | Spatial vectors |
-| `conflicted` | 00_workflow (if kept) | Namespace conflict resolution |
-| `stringi` | 01_prepare_data | String transliteration |
-| `miceRanger` | functions_calanda (imputation) | Missing data imputation |
-| `corrplot` | 01_prepare_data, 01_prepare_trait_data | Correlation plots |
-| `FactoMineR` | 01_prepare_data, 01_prepare_trait_data | PCA |
-| `factoextra` | 01_prepare_data, 01_prepare_trait_data | PCA visualization |
-| `gt` | 01_prepare_data | Tables |
-| `ggrepel` | 03_variance_partitioning, 05/06_postJSDM, 01_prepare_trait_data | Label repulsion |
-| `patchwork` | assess_trait_coverage | Plot composition |
-| `scales` | 03_variance_partitioning | Rescaling |
-| `readxl` | 01_prepare_trait_data | Excel file reading |
-| `dgof` | assess_trait_coverage | Cramer-von Mises test |
-| `rnaturalearth` / `rnaturalearthdata` | map | Country outlines |
-| `rayshader` | map_rgb_results | 3D rendering |
-| `raster` | map_rgb_results | raster_to_matrix (rayshader needs it) |
-| `elevatr` | map_rgb_results | Elevation downloads |
-| `tidyterra` | map_rgb_results | ggplot + terra integration |
-| `ggtern` | map_rgb_results | Ternary plots (evaluate if needed) |
-
-**Packages to REMOVE** (no longer needed after archiving):
-`qgam`, `mvabund`, `randomForest`, `caret`, `ggpubr`, `gridExtra`, `grid`, `ggforce`, `TNRS`, `spatialEco`
-
----
-
-### TASK 1: Overhaul `00_setup/00_workflow.R` ✅ DONE
-
-**Completed.** Rewritten as a minimal coordinator script. Only loads `library(here)`, then sources all pipeline scripts in execution order (Steps 1-4). Model fitting (Step 2) is gated behind `run_model = FALSE` flag since authoritative results come from `results_from_Max/`. Removed all library loading (~30 duplicated/unused), `setwd()`, inline data processing, TransPlant data, commented-out reticulate code, and duplicate `source()` calls.
-
----
-
-### TASK 2: Clean `00_setup/functions_calanda.R` ✅ DONE
-
-**Completed.** Removed 8 unused functions/objects, renamed `plot.anova.custom` → `plot_anova_custom`, `addA` → `add_alpha`, renamed parameters (`veg.clim` → `veg_clim`, `num.trees` → `num_trees`, `et.annual` → `et_annual`), added roxygen docs, organized into 2 sections. Reduced from ~2120 to ~1693 lines.
-
----
-
-### TASK 3: Clean `01_data_prep/01_prepare_data.R` ✅ DONE
-
-**Completed.** Added self-contained library loading, script header, `here()` paths throughout. Renamed all dotted objects (`veg.clim` → `veg_clim`, `veg.comm` → `veg_comm`, `veg.PA` → `veg_pa`, `veg.abund` → `veg_abund`, `veg.rare` → `veg_rare`, `veg.env` → `veg_env`, `imp.clim` → `imp_clim`, `imp.traits` → `imp_traits`, `et.annual` → `et_annual`, `res.pca` → `res_pca_*`). Removed `View()`, commented-out blocks, `select(-...1)` hacks. `write.csv` → `write_csv`. `size` → `linewidth`. Output CSV renamed `veg.clim.csv` → `veg_clim.csv`. `try` → `try_data` to avoid shadowing base R. `theme_bw()` applied.
-
-**Note:** Output CSV renamed from `veg.clim.csv` → `veg_clim.csv`. No other active scripts load this CSV directly (they use RData), so no breakage.
-
----
-
-### TASK 4: Clean `01_data_prep/01_prepare_trait_data.R` ✅ DONE
-
-**Completed.** Standardized `<-` → `=` throughout. All paths now use `here()`. Removed redundant `library(ggplot2)` (already in tidyverse), added `library(here)`. `theme_minimal()` → `theme_bw()`. Kept `clean_nc_data()` and `kcv()` inline (single-use functions, not worth abstracting to functions_calanda.R).
-
----
-
-### TASK 5: Clean `01_data_prep/assess_trait_coverage.R` ✅ DONE
-
-**Completed.** Added script header with inputs/outputs. Added `library(here)`, `library(patchwork)` at top, removed mid-script `library()` calls and redundant `library(ggplot2)`. All paths now use `here()`. Replaced `veg.abund` → `veg_abund` (with rename-on-load from RData). Made data loading unconditional (file-based, no `exists()` checks). Kept as single script (coverage + bias assessment are tightly coupled analytically).
-
----
-
-### TASK 6: Clean `02_model/02_jsdm.R` ✅ DONE
-
-**Completed.** Added script header with inputs/outputs. Added `library(here)`. All paths now use `here()`. `se=T` → `se = TRUE`. Removed date suffixes from output filenames. Renamed dotted hyperparameters (`lambda.env` → `lambda_env`, etc.). `et.annual` → `et_annual` in model formula. Removed `library(conflicted)` / `conflict_prefer` calls (using `dplyr::select` explicitly instead). Removed commented-out code.
-
----
-
-### TASK 7: Clean `03_analysis/03_variance_partitioning.R` ✅ DONE
-
-**Completed.** Updated function calls to match renamed functions (`plot.anova.custom` → `plot_anova_custom`), renamed `veg.clim` → `veg_clim` (with rename-on-load from RData), updated parameter names in ternary function calls.
-
----
-
-### TASK 8: Clean `03_analysis/05_community_postJSDM.R` ✅ DONE
-
-**Completed.** Added script header, self-contained library loading (`tidyverse`, `ggrepel`, `here`), file-based data loading with `here()`. Sources `functions_calanda.R` for shared `label_env_var()`. `veg.env` → `veg_env` (rename-on-load). `et.annual` → `et_annual` in formulas, variable references, and helper functions. All paths use `here()`. Removed inline `label_env_var` (moved to `functions_calanda.R`). Kept `predict_model` and `extract_coefs` inline (closure over script-local `models` list).
-
----
-
-### TASK 9: Clean `03_analysis/06_species_postJSDM.R` ✅ DONE
-
-**Completed.** Added script header, self-contained library loading (`tidyverse`, `sjSDM`, `ggrepel`, `here`), file-based data loading from `results_from_Max/`. Sources `functions_calanda.R` for shared `label_env_var()`. `et.annual` → `et_annual` in variable lists and `extract_coefs`. Removed inline `label_env_var` (using shared version). All paths use `here()`.
-
----
-
-### TASK 10: Clean `04_visualization/map.R` ✅ DONE
-
-**Completed.** Fixed broken `veg_bbox` — added `veg_bbox = st_bbox(veg_points)`. Added script header, self-contained library loading. `veg.clim` → `veg_clim` (rename-on-load). `<-` → `=`. `theme_minimal()` → `theme_bw()`. Removed redundant `library(ggplot2)`. All paths use `here()`. Renamed `my_shapefile` → `calanda_mask`.
-
----
-
-### TASK 11: Clean `04_visualization/map_rgb_results.R` ✅ DONE
-
-**Completed.** Removed `setwd()`. Added script header with inputs/outputs. All paths now use `here()`. `veg.env` → `veg_env` (rename-on-load). `theme_minimal()` → `theme_bw()`. Kept `raster` dependency (required by rayshader's `raster_to_matrix`). Kept `ggtern` dependency (used for ternary plot in this script).
-
----
-
-### TASK 12: Cross-cutting standardization (final pass) ✅ DONE
-
-All items verified:
-
-- [x] Rename `plot.anova.custom` → `plot_anova_custom` (functions + 03_variance_partitioning)
-- [x] Rename `et.annual` → `et_annual` (all active scripts: 01_prepare_data, 02_jsdm, 05_community, 06_species)
-- [x] All active scripts use `veg_env` (not `veg.env`) — 05_community, map_rgb use rename-on-load
-- [x] All active scripts use `veg_clim` (not `veg.clim`) — 03_variance, map use rename-on-load
-- [x] All active scripts use `veg_abund` (not `veg.abund`) — assess_trait_coverage uses rename-on-load
-- [x] All `source()` paths use `here()` with new folder structure
-- [x] All file I/O paths use `here()`
-- [x] `00_workflow.R` kept as coordinator script (sources all scripts in order)
-- [x] Final check passed: no `T`/`F`, no `write.csv`, no `View()`, no `setwd()` in active scripts
-- [x] Shared `label_env_var()` moved to `functions_calanda.R`, used by 05_community and 06_species
-
----
-
-### Suggested execution order for cleanup
-
-| Order | Task | Script | Priority |
-|-------|------|--------|----------|
-| 1 | TASK 2 | `functions_calanda.R` (audit + clean) | High |
-| 2 | TASK 1 | `00_workflow.R` (strip down or remove) | High |
-| 3 | TASK 3 | `01_prepare_data.R` | High |
-| 4 | TASK 4 | `01_prepare_trait_data.R` | Medium |
-| 5 | TASK 5 | `assess_trait_coverage.R` | Medium |
-| 6 | TASK 6 | `02_jsdm.R` | Low |
-| 7 | TASK 7 | `03_variance_partitioning.R` | Medium |
-| 8 | TASK 8 | `05_community_postJSDM.R` | Medium |
-| 9 | TASK 9 | `06_species_postJSDM.R` | Medium |
-| 10 | TASK 10 | `map.R` | Low |
-| 11 | TASK 11 | `map_rgb_results.R` | Low |
-| 12 | TASK 12 | Cross-cutting standardization | Final pass |
-
----
-
-### TASK 13: Style audit and cosmetic fixes ✅ DONE
-
-Post-cleanup style audit across all 11 active scripts. Fixes applied:
-
-- [x] `01_prepare_trait_data.R` line 228: added spaces around operators (`LCC>70|LCC<20` → `LCC > 70 | LCC < 20`)
-- [x] `functions_calanda.R`: replaced `require()` → `library()` for consistency
-- [x] `01_prepare_data.R`: added `library(conflicted)` + `conflict_prefer()` for `select`, `filter`, `extract` (tidyverse vs terra). Removed `dplyr::select` qualifications.
-- [x] `map_rgb_results.R`: added `library(conflicted)` + `conflict_prefer()` for `select`, `filter` (tidyverse vs terra)
-- [x] `02_jsdm.R`: added `library(conflicted)` + `conflict_prefer()` for `select`, `filter` (tidyverse vs sjSDM). Removed `dplyr::select` qualification.
-- [x] `functions_calanda.R`: kept explicit `dplyr::` and `terra::` qualifications (appropriate for a sourced helper file that doesn't load its own libraries)
+| Rule | Convention |
+|------|-----------|
+| **Naming** | `snake_case` everywhere (objects, functions, files, columns). No dots in names. |
+| **Assignment** | `=` (not `<-`) |
+| **Booleans** | `TRUE` / `FALSE` (not `T` / `F`) |
+| **CSV I/O** | `read_csv()` / `write_csv()` (tidyverse) |
+| **Paths** | `here::here()` (no `setwd()`) |
+| **Plots** | `theme_bw()` as default |
+| **Libraries** | Each script loads its own (file-based, self-contained) |
+| **Conflicts** | `library(conflicted)` + `conflict_prefer()` in scripts that load conflicting packages |
+| **No** | `View()`, `setwd()`, `library(ggplot2)` when tidyverse is loaded |
 
 ---
 
