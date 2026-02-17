@@ -21,19 +21,18 @@ run_model = FALSE   # Set TRUE to re-fit the sjSDM model (GPU required)
 cat("\n========== STEP 1: Data preparation ==========\n")
 
 # 1a. Fetch TRY traits + indicators + dispersal from databases
-source(here("Calanda_JSDM", "R", "01_data_prep", "01b_fetch_try_traits.R"))
+source(here("Calanda_JSDM", "R", "01_data_prep", "01_prepare_TRY_traits.R"))
 
 # 1b. Process field-collected trait measurements
-source(here("Calanda_JSDM", "R", "01_data_prep", "02_prepare_trait_data.R"))
+source(here("Calanda_JSDM", "R", "01_data_prep", "02_prepare_field_trait_data.R"))
 
-# 1c. Merge TRY + field traits, calculate species summaries, impute
-source(here("Calanda_JSDM", "R", "01_data_prep", "03_merge_traits.R"))
+# 1c. Merge TRY + field traits, species summaries, impute, and assess coverage
+#     (produces traits.csv needed by step 1d; coverage assessment runs only if
+#      starter_data from a previous run of step 1d is available)
+source(here("Calanda_JSDM", "R", "01_data_prep", "03_merge_and_assess_traits.R"))
 
-# 1d. Prepare environmental data (uses merged traits.csv)
-source(here("Calanda_JSDM", "R", "01_data_prep", "01_prepare_data.R"))
-
-# 1e. Assess trait coverage and sampling bias
-source(here("Calanda_JSDM", "R", "01_data_prep", "04_assess_trait_coverage.R"))
+# 1d. Prepare environmental data (uses traits.csv from step 1c)
+source(here("Calanda_JSDM", "R", "01_data_prep", "04_prepare_climate_vegetation_data.R"))
 
 # ==============================================================================
 # 2. Model fitting (optional — uses results_from_Max/ by default)
