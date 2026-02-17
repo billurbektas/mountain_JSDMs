@@ -9,6 +9,8 @@
 #     Combines individual-level trait observations from:
 #       1. TRY database (output/try_traits_individual.csv from 01)
 #       2. Field measurements (output/field_traits_clean.csv from 02)
+#     Harmonizes units to TRY standard (m, kg/m2, mg/g), converts TRY SLA
+#     to LMA (1/SLA), converts field heights (mm→m) and CN (% → mg/g).
 #     Then calculates species-level means and variances from the combined data,
 #     merges with ecological indicators and dispersal traits, and imputes
 #     missing values.
@@ -87,12 +89,27 @@ dispersal = read_csv(
 )
 
 # ==============================================================================
-# 2. HARMONIZE TRAIT NAMES AND RESHAPE TO LONG FORMAT
+# 2. DEFINE TARGET UNITS
 # ==============================================================================
-cat("\n=== Harmonizing trait names ===\n")
+
+# Target units for all merged traits (TRY standard)
+target_units = tibble(
+  trait = c("vegetative_height", "reproductive_height", "LMA", "LA",
+            "LDMC", "LNC", "LCC", "seed_mass", "flowering_phenology"),
+  unit = c("m", "m", "kg/m2", "cm2",
+           "mg/g", "mg/g", "mg/g", "mg", "ordinal")
+)
+
+cat("\n=== Target units for merged traits ===\n")
+print(target_units, n = Inf)
+
+# ==============================================================================
+# 3. HARMONIZE TRY TRAIT NAMES AND CONVERT SLA → LMA
+# ==============================================================================
+cat("\n=== Harmonizing TRY trait names ===\n")
 
 # TRY data is already in long format with TraitName and Value columns
-# Standardize trait names
+# Standardize trait names and convert SLA to LMA
 try_long = try_individual %>%
   mutate(
     trait = case_when(
@@ -111,10 +128,30 @@ try_long = try_individual %>%
   ) %>%
   select(species_TNRS, trait, value = Value, source)
 
+# Convert SLA (m2/kg) to LMA (kg/m2): LMA = 1/SLA
+n_sla = sum(try_long$trait == "SLA", na.rm = TRUE)
+try_long = try_long %>%
+  mutate(
+    value = ifelse(trait == "SLA" & value > 0, 1 / value, value),
+    trait = ifelse(trait == "SLA", "LMA", trait)
+  )
+cat(sprintf("Converted %d TRY SLA observations to LMA (1/SLA, m2/kg -> kg/m2)\n", n_sla))
+
 cat("TRY traits standardized:", n_distinct(try_long$trait), "traits\n")
 
-# Field data needs to be reshaped from wide to long
-# Field traits: vegetative_height, reproductive_height, LMA, LDMC, N_content_corr, C_content_corr
+# ==============================================================================
+# 4. CONVERT FIELD UNITS AND RESHAPE TO LONG FORMAT
+# ==============================================================================
+cat("\n=== Converting field units to TRY standard ===\n")
+
+# Field unit conversions:
+#   vegetative_height:   mm -> m    (/ 1000)
+#   reproductive_height: mm -> m    (/ 1000)
+#   N_content_corr:      % -> mg/g  (* 10)
+#   C_content_corr:      % -> mg/g  (* 10)
+#   LMA:                 kg/m2      (no conversion)
+#   LDMC:                mg/g       (no conversion)
+
 field_long = field_individual %>%
   select(
     plant_species,
@@ -125,7 +162,12 @@ field_long = field_individual %>%
     N_content_corr,
     C_content_corr
   ) %>%
-  # Rename to match TRY trait names before pivoting
+  mutate(
+    vegetative_height = vegetative_height / 1000,       # mm -> m
+    reproductive_height = reproductive_height / 1000,   # mm -> m
+    N_content_corr = N_content_corr * 10,               # % -> mg/g
+    C_content_corr = C_content_corr * 10                # % -> mg/g
+  ) %>%
   rename(LNC = N_content_corr, LCC = C_content_corr) %>%
   pivot_longer(
     cols = -plant_species,
@@ -139,12 +181,41 @@ field_long = field_individual %>%
 cat("Field traits standardized:", n_distinct(field_long$trait), "traits\n")
 
 # ==============================================================================
-# 3. COMBINE TRY AND FIELD DATA
+# 5. COMBINE TRY AND FIELD DATA + UNIT CHECK
 # ==============================================================================
 cat("\n=== Combining TRY and field data ===\n")
 
 # Combine both sources
 all_individual = bind_rows(try_long, field_long)
+
+# --- Unit harmonization check ---
+cat("\n=== Unit harmonization check ===\n")
+
+# Verify all traits are in the target set
+merged_traits = sort(unique(all_individual$trait))
+expected_traits = sort(target_units$trait)
+unexpected = setdiff(merged_traits, expected_traits)
+if (length(unexpected) > 0) {
+  cat("WARNING: unexpected traits found:", paste(unexpected, collapse = ", "), "\n")
+} else {
+  cat("All traits match target unit reference.\n")
+}
+
+# Show per-trait ranges by source to verify unit consistency
+range_check = all_individual %>%
+  group_by(trait, source) %>%
+  summarize(
+    n = n(),
+    min = round(min(value, na.rm = TRUE), 4),
+    median = round(median(value, na.rm = TRUE), 4),
+    max = round(max(value, na.rm = TRUE), 4),
+    .groups = "drop"
+  ) %>%
+  left_join(target_units, by = "trait") %>%
+  arrange(trait, source)
+
+cat("\nTrait value ranges by source (verify units are compatible):\n")
+print(range_check, n = 30)
 
 cat("Combined dataset:", nrow(all_individual), "observations\n")
 cat("Species:", n_distinct(all_individual$species_TNRS), "\n")
@@ -176,7 +247,7 @@ write_csv(all_individual, here("Calanda_JSDM", "output", "all_traits_individual.
 cat("\nSaved combined individual data to output/all_traits_individual.csv\n")
 
 # ==============================================================================
-# 4. CALCULATE SPECIES-LEVEL SUMMARIES
+# 6. CALCULATE SPECIES-LEVEL SUMMARIES
 # ==============================================================================
 cat("\n=== Calculating species-level trait summaries ===\n")
 
@@ -198,7 +269,7 @@ species_traits = all_individual %>%
 cat("Species summaries calculated for", nrow(species_traits), "species\n")
 
 # ==============================================================================
-# 5. MERGE WITH INDICATORS AND DISPERSAL
+# 7. MERGE WITH INDICATORS AND DISPERSAL
 # ==============================================================================
 cat("\n=== Merging with indicators and dispersal ===\n")
 
@@ -221,8 +292,6 @@ traits_ordered = traits %>%
     # Leaf area traits
     Mean_LA,
     Var_LA,
-    Mean_SLA,
-    Var_SLA,
     Mean_LMA,
     Var_LMA,
     Mean_LDMC,
@@ -255,7 +324,7 @@ write_csv(traits_ordered, here("Calanda_JSDM", "output", "traits_raw.csv"))
 cat("Saved raw traits to output/traits_raw.csv\n")
 
 # ==============================================================================
-# 6. IMPUTE MISSING TRAIT VALUES
+# 8. IMPUTE MISSING TRAIT VALUES
 # ==============================================================================
 cat("\n=== Imputing missing trait values ===\n")
 
@@ -266,7 +335,6 @@ traits_for_imputation = traits_ordered %>%
     Mean_seed_mass,
     dispersal,
     Mean_LA,
-    Mean_SLA,
     Mean_LMA,
     Mean_LDMC,
     Mean_vegetative_height,
@@ -287,7 +355,6 @@ variables_to_impute = c(
   "Mean_seed_mass",
   "dispersal",
   "Mean_LA",
-  "Mean_SLA",
   "Mean_LMA",
   "Mean_LDMC",
   "Mean_vegetative_height",
@@ -347,7 +414,7 @@ write_csv(traits_imputed, here("Calanda_JSDM", "output", "traits.csv"))
 cat("\nSaved imputed traits to output/traits.csv\n")
 
 # ==============================================================================
-# 7. MERGE SUMMARY
+# 9. MERGE SUMMARY
 # ==============================================================================
 cat("\n=== Merge Summary ===\n")
 cat("TRY individual observations:", nrow(try_individual), "\n")

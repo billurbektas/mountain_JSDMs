@@ -167,3 +167,12 @@ cat("Removed problematic values:\n")
 # Save all datasets
 write_csv(all_traits, here("Calanda_JSDM", "output", "field_traits_merged.csv"))
 write_csv(final_traits_clean, here("Calanda_JSDM", "output", "field_traits_clean.csv"))
+
+# Save unit reference for downstream harmonization ----
+field_units = tibble(
+  trait = c("vegetative_height", "reproductive_height", "LMA", "LDMC",
+            "N_content_corr", "C_content_corr", "sum_leaf_cm2"),
+  unit = c("mm", "mm", "kg/m2", "mg/g", "% dry mass", "% dry mass", "cm2")
+)
+write_csv(field_units, here("Calanda_JSDM", "output", "field_trait_units.csv"))
+cat("Saved field trait unit reference to output/field_trait_units.csv\n")
