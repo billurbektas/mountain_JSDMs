@@ -8,7 +8,7 @@
 #   Part A — MERGE:
 #     Combines individual-level trait observations from:
 #       1. TRY database (output/try_traits_individual.csv from 01)
-#       2. Field measurements (output/final_traits_clean.csv from 02)
+#       2. Field measurements (output/field_traits_clean.csv from 02)
 #     Then calculates species-level means and variances from the combined data,
 #     merges with ecological indicators and dispersal traits, and imputes
 #     missing values.
@@ -22,11 +22,10 @@
 #
 # Input files:
 #   - output/try_traits_individual.csv (from 01_prepare_TRY_traits.R)
-#   - output/final_traits_clean.csv (from 02_prepare_field_trait_data.R)
+#   - output/field_traits_clean.csv (from 02_prepare_field_trait_data.R)
 #   - output/indicators.csv (from 01_prepare_TRY_traits.R)
 #   - output/dispersal.csv (from 01_prepare_TRY_traits.R)
-#   - output/species_trait_summary.csv (from 02, for coverage assessment)
-#   - output/starter_data_25.04.25.RData (from 03, for coverage assessment)
+#   - output/starter_data_25.04.25.RData (from 04, for coverage assessment)
 #
 # Output files:
 #   Part A:
@@ -71,7 +70,7 @@ cat("TRY data:", nrow(try_individual), "observations\n")
 
 # Load field individual-level data
 field_individual = read_csv(
-  here("Calanda_JSDM", "output", "final_traits_clean.csv"),
+  here("Calanda_JSDM", "output", "field_traits_clean.csv"),
   show_col_types = FALSE
 )
 cat("Field data:", nrow(field_individual), "observations\n")
@@ -115,7 +114,7 @@ try_long = try_individual %>%
 cat("TRY traits standardized:", n_distinct(try_long$trait), "traits\n")
 
 # Field data needs to be reshaped from wide to long
-# Field traits: vegetative_height, reproductive_height, LMA, LDMC, LNC, LCC
+# Field traits: vegetative_height, reproductive_height, LMA, LDMC, N_content_corr, C_content_corr
 field_long = field_individual %>%
   select(
     plant_species,
@@ -123,9 +122,11 @@ field_long = field_individual %>%
     reproductive_height,
     LMA,
     LDMC,
-    LNC,
-    LCC
+    N_content_corr,
+    C_content_corr
   ) %>%
+  # Rename to match TRY trait names before pivoting
+  rename(LNC = N_content_corr, LCC = C_content_corr) %>%
   pivot_longer(
     cols = -plant_species,
     names_to = "trait",
@@ -381,27 +382,12 @@ library(patchwork)
 
 cat("\n=== Trait Coverage Assessment ===\n")
 
-# Load the species trait summary
-trait_summary = read_csv(here("Calanda_JSDM", "output", "species_trait_summary.csv")) %>%
-  mutate(plant_species = case_when(plant_species == "Acinos alpinus" ~ "Clinopodium alpinum",
-                                   plant_species == "Euphrasia rostkoviana" ~ "Euphrasia officinalis subsp. pratensis",
-                                   plant_species == "Festuca pratensis" ~ "Lolium pratense",
-                                   plant_species == "Helictotrichon pubescens" ~ "Avenula pubescens",
-                                   plant_species == "Hieracium lactucella" ~ "Pilosella lactucella",
-                                   plant_species == "Hieracium pilosella" ~ "Pilosella officinarum",
-                                   plant_species == "Polygala chamaebuxus" ~ "Polygaloides chamaebuxus",
-                                   plant_species == "Polygonum viviparum" ~ "Bistorta vivipara",
-                                   plant_species == "Viola riviana" ~ "Viola riviniana",
-                                   .default = plant_species
-                                   ))
-
-# Get list of species with trait data (at least one trait measured)
-species_with_traits = trait_summary %>%
-  filter(n_samples > 0) %>%
-  pull(plant_species)
+# Get list of species with trait data from all_individual (computed in Part A)
+species_with_traits = all_individual %>%
+  distinct(species_TNRS) %>%
+  pull(species_TNRS)
 
 cat(sprintf("\nTotal species with trait data: %d\n", length(species_with_traits)))
-cat(sprintf("Total species in trait summary: %d\n", nrow(trait_summary)))
 
 # Load abundance data and JSDM results
 cat("\nLoading data from starter_data_25.04.25.RData...\n")

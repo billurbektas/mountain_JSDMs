@@ -119,10 +119,9 @@ Merges TRY and field trait data, calculates species-level summaries, and assesse
 | Inputs | |
 |--------|--|
 | `output/try_traits_individual.csv` | TRY individual observations |
-| `output/final_traits_clean.csv` | Field trait measurements |
+| `output/field_traits_clean.csv` | Field trait measurements |
 | `output/indicators.csv` | Ecological indicators |
 | `output/dispersal.csv` | Dispersal traits |
-| `output/species_trait_summary.csv` | Species-level trait summary (for coverage) |
 | `output/starter_data_25.04.25.RData` | Abundance matrix and JSDM results (optional, for coverage) |
 
 | Outputs | |
@@ -185,35 +184,23 @@ Builds the environmental matrix (X) and species matrix (Y) for the JSDM.
 
 ### `01_data_prep/02_prepare_field_trait_data.R`
 
-Processes raw functional trait measurements into species-level summaries.
+Processes field-collected trait measurements into clean individual-level data.
 
-**What it does:** Parses leaf N/C isotope data from Excel files, maps CN analysis IDs to plant IDs, merges with leaf area measurements, calculates derived traits (LMA, LDMC), validates data quality (weight errors, nutrient outliers), computes species-level means and coefficients of variation (kCV), runs PCA on mean traits and kCV values.
+**What it does:** Loads pre-cleaned trait data (with CN already integrated), merges with scanned leaf area measurements, calculates derived traits (LMA, LDMC), validates data quality (dry vs fresh weight checks, C content outlier flagging), and creates a clean dataset with problematic values set to NA rather than removing entire rows.
 
 | Inputs | |
 |--------|--|
-| `data/traits/N+C_Samples*.xls` | Isotope analysis results (multiple files) |
-| `data/traits/Trial*.xls` | Additional isotope runs |
-| `data/traits/2025_CAPHE_traits_sample_id.csv` | Sample ID mapping |
-| `data/traits/2025_TRAITS_clean_20251023.csv` | Cleaned trait measurements |
+| `data/traits/2025_TRAITS_CleanData_20251228.csv` | Pre-cleaned trait data (with CN) |
 | `data/traits/leaf_area.csv` | Scanned leaf areas |
 
 | Outputs | |
 |---------|--|
-| `output/species_trait_summary.csv` | Species-level trait means and kCV |
-| `output/final_traits_clean.csv` | Individual-level cleaned traits |
-| `output/all_traits_merged.csv` | All traits merged before cleaning |
-| `output/pca_means_eigenvalues.csv`, `output/pca_kcv_eigenvalues.csv` | PCA eigenvalues |
-| `output/pca_means_var_contrib.csv`, `output/pca_kcv_var_contrib.csv` | PCA variable contributions |
-| `plot/corrplot_all_traits.pdf` | Trait correlation matrix |
-| `plot/pca_trait_means_biplot.pdf` | PCA biplot of trait means |
-| `plot/pca_kcv_biplot.pdf` | PCA biplot of trait variability |
+| `output/field_traits_merged.csv` | All traits merged, with error flags |
+| `output/field_traits_clean.csv` | Clean version (errors set to NA) |
 
 | Key library usage | |
 |-------------------|--|
-| `readxl::read_excel()` | Parse multi-section Excel isotope data sheets |
-| `FactoMineR::PCA()` | PCA on species-level mean traits and kCV values |
-| `corrplot::corrplot()` | Correlation matrix of all traits |
-| `ggrepel::geom_text_repel()` | Non-overlapping species labels on PCA biplots |
+| `tidyverse` | Data wrangling and validation |
 
 ---
 
@@ -393,8 +380,8 @@ Raw data (data/)
     Trait samples (data/traits/) ──► 02_prepare_field_trait_data.R
                                           │
                                           ▼
-                              output/species_trait_summary.csv
-                              output/final_traits_clean.csv
+                              output/field_traits_merged.csv
+                              output/field_traits_clean.csv
                                           │
                                           ▼
                               03_merge_and_assess_traits.R
