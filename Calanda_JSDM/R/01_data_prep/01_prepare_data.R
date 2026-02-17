@@ -9,18 +9,17 @@
 #   - data/wekeo/ (Copernicus snow data)
 #   - data/vegetation/veg.coord.csv
 #   - data/mask/*.shp (study region shapefiles)
-#   - data/traits/try.quantitative_traits_2025-03-17.csv
-#   - data/traits/indicators_cleaned_calanda_2025-03-17.csv
-#   - data/traits/dispersal_cleaned_calanda_2025-03-17.csv
+#   - output/traits.csv (created by 01b_fetch_try_traits.R)
 #
 # Outputs:
 #   - output/veg_clim.csv
-#   - output/traits.csv
 #   - output/starter_data_25.04.25.RData
 #   - plot/land_use_variable.pdf
 #   - plot/climate_calanda_surveys.pdf
 #
-# Requires: R/00_setup/functions_calanda.R
+# Requires:
+#   - R/00_setup/functions_calanda.R
+#   - Must run 01b_fetch_try_traits.R first to create output/traits.csv
 # ==============================================================================
 
 library(tidyverse)
@@ -62,7 +61,8 @@ veg = read_csv(here("Calanda_JSDM", "data", "vegetation",
                 taxon_global, species_cover, altitude) %>%
   distinct() %>%
   rename(Latitude = y, Longitude = x) %>%
-  mutate(taxon_global = stri_trans_general(taxon_global, "Latin-ASCII"))
+  mutate(taxon_global = stri_trans_general(taxon_global, "Latin-ASCII"))%>%
+  mutate(soil_depth_var = ifelse(is.nan(soil_depth_var), NA, soil_depth_var)) # happens because there are NAs for soil depth.
 
 cat(length(unique(veg$taxon_global)), "species and",
     length(unique(veg$plot_id_releve)), "plots.\n")
@@ -378,76 +378,11 @@ print(as.data.frame(colSums(Y)))
 # ==============================================================================
 # TRAIT DATA
 # ==============================================================================
-cat("\n=== Processing trait data ===\n")
+cat("\n=== Loading trait data ===\n")
 
-if (file.exists(here("Calanda_JSDM", "output", "traits.csv"))) {
-  traits = read_csv(here("Calanda_JSDM", "output", "traits.csv"))
-} else {
-  try_data = read_csv(here("Calanda_JSDM", "data", "traits",
-                           "try.quantitative_traits_2025-03-17.csv"))
-  indicators = read_csv(here("Calanda_JSDM", "data", "traits",
-                             "indicators_cleaned_calanda_2025-03-17.csv"))
-  dispersal = read_csv(here("Calanda_JSDM", "data", "traits",
-                            "dispersal_cleaned_calanda_2025-03-17.csv"))
-
-  traits = try_data %>%
-    filter(Trait %in% c("N_percent", "LDMC", "vegetative_height", "SLA", "LA",
-                        "C_percent", "seed_mass")) %>%
-    mutate(species = ifelse(species == "Vaccinium uliginosum subsp. uliginosum",
-                            "Vaccinium uliginosum", species)) %>%
-    filter(species %in% colnames(Y)) %>%
-    filter(!is.na(Value), !is.na(Trait)) %>%
-    filter(!Climate_code %in% c("Af", "Am", "Aw", "BWh", "BWk", "BSh", "BSk")) %>%
-    group_by(species, species_TNRS, Trait) %>%
-    summarize(Mean = mean(Value, na.rm = TRUE),
-              Var = var(Value, na.rm = TRUE),
-              .groups = "drop") %>%
-    pivot_wider(names_from = Trait,
-                values_from = c(Mean, Var),
-                names_glue = "{.value}_{Trait}") %>%
-    ungroup()
-
-  traits = left_join(dispersal, traits) %>%
-    left_join(indicators) %>%
-    select(species, species_TNRS,
-           Mean_seed_mass, Var_seed_mass, dispersal_distance_class,
-           Mean_LA, Var_LA, Mean_SLA, Var_SLA, Mean_LDMC, Var_LDMC,
-           Mean_vegetative_height, Var_vegetative_height,
-           Mean_N_percent, Var_N_percent, Mean_C_percent, Var_C_percent,
-           Light, Moisture, Nutrients, Disturbance.Severity) %>%
-    rename(disturbance = Disturbance.Severity,
-           dispersal = dispersal_distance_class)
-
-  imp_traits = impute_functional_traits(
-    traits,
-    variables_to_impute = c("Mean_seed_mass", "dispersal", "Mean_LA", "Mean_SLA",
-                            "Mean_LDMC", "Mean_vegetative_height", "Mean_N_percent",
-                            "Mean_C_percent", "Light", "Moisture", "Nutrients",
-                            "disturbance"),
-    m = 30,
-    maxiter = 100,
-    num_trees = 500,
-    seed = 123,
-    validation_fraction = 0.3
-  )
-
-  traits %>%
-    summarise(across(everything(), ~mean(is.na(.)) * 100)) %>%
-    pivot_longer(cols = everything(),
-                 names_to = "variable",
-                 values_to = "percent_missing") %>%
-    arrange(desc(percent_missing)) %>%
-    right_join(imp_traits$performance) %>%
-    mutate(percent_missing = round(percent_missing),
-           r_squared = round(r_squared, 2)) %>%
-    select(variable, percent_missing, r_squared) %>%
-    gt()
-
-  traits = imp_traits$imputed_data %>%
-    select(species, species_TNRS, starts_with("Var_"), contains("_final")) %>%
-    rename_with(~str_remove(., "_final$"), ends_with("_final"))
-  write_csv(traits, here("Calanda_JSDM", "output", "traits.csv"))
-}
+# Traits are now processed by 01b_fetch_try_traits.R using tidyTRY
+traits = read_csv(here("Calanda_JSDM", "output", "traits.csv"), show_col_types = FALSE)
+cat("Loaded traits for", nrow(traits), "species\n")
 
 # ==============================================================================
 # LAND-USE PCA

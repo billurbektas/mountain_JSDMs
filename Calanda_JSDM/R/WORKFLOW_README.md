@@ -15,9 +15,11 @@ R/
 │   └── functions_calanda.R        # Shared helper functions
 │
 ├── 01_data_prep/
+│   ├── 01b_fetch_try_traits.R     # TRY database + floraveg.eu trait fetching
+│   ├── 02_prepare_trait_data.R    # Field trait processing (isotopes, LMA, LDMC, PCA)
+│   ├── 03_merge_traits.R          # Merge TRY + field traits, species summaries
 │   ├── 01_prepare_data.R          # Environmental data pipeline
-│   ├── 02_prepare_trait_data.R    # Trait processing (isotopes, LMA, LDMC, PCA)
-│   └── 03_assess_trait_coverage.R # QA: trait coverage + bias assessment
+│   └── 04_assess_trait_coverage.R # QA: trait coverage + bias assessment
 │
 ├── 02_model/
 │   └── 04_jsdm.R                  # Fits sjSDM model (GPU required)
@@ -42,9 +44,11 @@ Run `00_workflow.R` to execute the full pipeline, or source scripts individually
 
 ```r
 # Step 1: Data preparation
-source("R/01_data_prep/01_prepare_data.R")
-source("R/01_data_prep/02_prepare_trait_data.R")
-source("R/01_data_prep/03_assess_trait_coverage.R")
+source("R/01_data_prep/01b_fetch_try_traits.R")  # Fetch TRY + indicators + dispersal
+source("R/01_data_prep/02_prepare_trait_data.R") # Process field traits
+source("R/01_data_prep/03_merge_traits.R")       # Merge TRY + field, species summaries
+source("R/01_data_prep/01_prepare_data.R")       # Environmental data (uses traits.csv)
+source("R/01_data_prep/04_assess_trait_coverage.R")
 
 # Step 2: Model fitting (GPU required) -- or use results_from_Max/
 source("R/02_model/04_jsdm.R")
@@ -82,6 +86,57 @@ Shared helper functions sourced by other scripts. Not run directly.
 
 ---
 
+### `01_data_prep/01b_fetch_try_traits.R`
+
+Fetches trait data from TRY database and ecological indicators from floraveg.eu using the tidyTRY package.
+
+**What it does:** Extracts species list from raw vegetation data, processes raw TRY database exports, downloads ecological indicators and dispersal traits from floraveg.eu, filters by climate zone, and outputs individual-level trait observations for merging with field data.
+
+| Inputs | |
+|--------|--|
+| `data/vegetation/2024_CAPHE_SpeDis_CleanData_20240214.csv` | Species list source |
+| `data/try/try_*.txt` | Raw TRY database exports |
+
+| Outputs | |
+|---------|--|
+| `output/try_traits_individual.csv` | Individual observations for ITV analysis |
+| `output/indicators.csv` | Ecological indicators from floraveg.eu |
+| `output/dispersal.csv` | Dispersal traits from floraveg.eu |
+
+| Key library usage | |
+|-------------------|--|
+| `tidyTRY::process_try()` | Process raw TRY database files |
+| `tidyTRY::read_indicators()` | Download ecological indicators from floraveg.eu |
+| `tidyTRY::read_dispersal()` | Download dispersal traits from floraveg.eu |
+| `tidyTRY::extract_climate_zones()` | Assign Koppen-Geiger climate zones |
+
+---
+
+### `01_data_prep/03_merge_traits.R`
+
+Merges TRY and field trait data, calculates species-level summaries.
+
+**What it does:** Combines individual-level trait observations from TRY database and field measurements, harmonizes trait names, calculates species-level means and variances from the combined data, merges with ecological indicators and dispersal traits, and imputes missing values.
+
+| Inputs | |
+|--------|--|
+| `output/try_traits_individual.csv` | TRY individual observations |
+| `output/final_traits_clean.csv` | Field trait measurements |
+| `output/indicators.csv` | Ecological indicators |
+| `output/dispersal.csv` | Dispersal traits |
+
+| Outputs | |
+|---------|--|
+| `output/all_traits_individual.csv` | Combined TRY + field individual data |
+| `output/traits_raw.csv` | Species summaries before imputation |
+| `output/traits.csv` | Final imputed traits for JSDM pipeline |
+
+| Key library usage | |
+|-------------------|--|
+| `impute_functional_traits()` | Random-forest imputation of missing traits |
+
+---
+
 ### `01_data_prep/01_prepare_data.R`
 
 Builds the environmental matrix (X) and species matrix (Y) for the JSDM.
@@ -96,14 +151,11 @@ Builds the environmental matrix (X) and species matrix (Y) for the JSDM.
 | `data/ecostress/*.csv` | ECOSTRESS land surface temperature |
 | `data/modis/*.csv` | MODIS evapotranspiration |
 | `data/wekeo/` | Copernicus GFSC snow cover ZIPs |
-| `data/traits/try.quantitative_traits_*.csv` | TRY trait data |
-| `data/traits/indicators_cleaned_calanda_*.csv` | Ecological indicator values |
-| `data/traits/dispersal_cleaned_calanda_*.csv` | Dispersal traits |
+| `output/traits.csv` | Trait data (from 03_merge_traits.R) |
 
 | Outputs | |
 |---------|--|
 | `output/veg_clim.csv` | Merged vegetation + environmental data |
-| `output/traits.csv` | Processed trait data |
 | `output/starter_data_25.04.25.RData` | All R objects for downstream scripts |
 | `output/calanda_mask.shp` | Merged study area polygon |
 | `output/snow_metrics.csv` | Snow disappearance dates and cover days |
@@ -157,7 +209,7 @@ Processes raw functional trait measurements into species-level summaries.
 
 ---
 
-### `01_data_prep/03_assess_trait_coverage.R`
+### `01_data_prep/04_assess_trait_coverage.R`
 
 Quality assurance: tests whether trait-sampled communities are representative.
 
@@ -349,12 +401,18 @@ Study area maps.
 ```
 Raw data (data/)
     │
-    ├── Vegetation surveys ──┐
-    ├── Topography (SwissALTI3D) ──┤
-    ├── Snow (Copernicus GFSC) ──┤
+    ├── TRY database (data/try/) ──┐
+    ├── floraveg.eu (online) ──────┤  01b_fetch_try_traits.R
+    └── Vegetation surveys ────────┘         │
+                                             ▼
+                                   output/traits.csv
+                                   output/try_traits_individual.csv
+                                             │
+    ├── Vegetation surveys ──┐               │
+    ├── Topography (SwissALTI3D) ──┤         │
+    ├── Snow (Copernicus GFSC) ──┤           │
     ├── LST (ECOSTRESS) ──┤        01_prepare_data.R
-    ├── ET (MODIS) ──┤                    │
-    └── Traits (TRY + field) ──┘          │
+    └── ET (MODIS) ──┘                    │
                                           ▼
                               output/starter_data_25.04.25.RData
                               output/veg_clim.csv
@@ -365,7 +423,7 @@ Raw data (data/)
                               output/species_trait_summary.csv
                                           │
                                           ▼
-                              03_assess_trait_coverage.R (QA)
+                              04_assess_trait_coverage.R (QA)
                                           │
                                           ▼
                               04_jsdm.R / results_from_Max/

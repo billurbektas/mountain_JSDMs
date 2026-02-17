@@ -19,9 +19,21 @@ run_model = FALSE   # Set TRUE to re-fit the sjSDM model (GPU required)
 # 1. Data preparation
 # ==============================================================================
 cat("\n========== STEP 1: Data preparation ==========\n")
-source(here("Calanda_JSDM", "R", "01_data_prep", "01_prepare_data.R"))
+
+# 1a. Fetch TRY traits + indicators + dispersal from databases
+source(here("Calanda_JSDM", "R", "01_data_prep", "01b_fetch_try_traits.R"))
+
+# 1b. Process field-collected trait measurements
 source(here("Calanda_JSDM", "R", "01_data_prep", "02_prepare_trait_data.R"))
-source(here("Calanda_JSDM", "R", "01_data_prep", "03_assess_trait_coverage.R"))
+
+# 1c. Merge TRY + field traits, calculate species summaries, impute
+source(here("Calanda_JSDM", "R", "01_data_prep", "03_merge_traits.R"))
+
+# 1d. Prepare environmental data (uses merged traits.csv)
+source(here("Calanda_JSDM", "R", "01_data_prep", "01_prepare_data.R"))
+
+# 1e. Assess trait coverage and sampling bias
+source(here("Calanda_JSDM", "R", "01_data_prep", "04_assess_trait_coverage.R"))
 
 # ==============================================================================
 # 2. Model fitting (optional — uses results_from_Max/ by default)
