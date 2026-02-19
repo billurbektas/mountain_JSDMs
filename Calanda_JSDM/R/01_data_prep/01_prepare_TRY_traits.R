@@ -19,6 +19,7 @@
 #
 # Output files:
 #   - output/try_traits_individual.csv (individual observations for ITV)
+#   - output/try_trait_units.csv (TRY standardized unit per trait)
 #   - output/indicators.csv (ecological indicators from floraveg.eu)
 #   - output/dispersal.csv (dispersal traits from floraveg.eu)
 #
@@ -276,6 +277,10 @@ try_individual = try_filtered %>%
 write_csv(try_individual, here("Calanda_JSDM", "output", "try_traits_individual.csv"))
 cat("Saved", nrow(try_individual), "individual observations to output/try_traits_individual.csv\n")
 
+# Save TRY unit reference (one row per trait, majority unit from StdValue)
+write_csv(try_result$units, here("Calanda_JSDM", "output", "try_trait_units.csv"))
+cat("Saved TRY trait unit reference to output/try_trait_units.csv\n")
+
 # ==============================================================================
 # 9. SUMMARY
 # ==============================================================================
@@ -288,6 +293,7 @@ cat("Species with dispersal:", n_distinct(dispersal$species_TNRS), "\n")
 
 cat("\nOutput files:\n")
 cat("  - output/try_traits_individual.csv (for merging with field data)\n")
+cat("  - output/try_trait_units.csv (TRY standardized units per trait)\n")
 cat("  - output/indicators.csv\n")
 cat("  - output/dispersal.csv\n")
 

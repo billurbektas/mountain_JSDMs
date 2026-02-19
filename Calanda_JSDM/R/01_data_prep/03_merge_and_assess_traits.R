@@ -1,62 +1,44 @@
 # ==============================================================================
 # Script: 03_merge_and_assess_traits.R
-# Purpose: Merge TRY and field trait data, calculate species summaries,
-#          and assess trait coverage per community and bias in variance
+# Purpose: Merge TRY and field trait data, calculate species-level means and
+#          kCV, and assess trait coverage per community and bias in variance
 #          components.
 #
 # Description:
-#   Part A — MERGE:
-#     Combines individual-level trait observations from:
-#       1. TRY database (output/try_traits_individual.csv from 01)
-#       2. Field measurements (output/field_traits_clean.csv from 02)
-#     Harmonizes units to TRY standard (m, kg/m2, mg/g), converts TRY SLA
-#     to LMA (1/SLA), converts field heights (mm→m) and CN (% → mg/g).
-#     Then calculates species-level means and variances from the combined data,
-#     merges with ecological indicators and dispersal traits, and imputes
-#     missing values.
-#
-#   Part B — ASSESS COVERAGE (runs only if starter_data exists):
-#     Computes per-plot trait coverage (proportion of species with trait data
-#     weighted by abundance). Tests whether plots with high trait coverage
-#     differ systematically in JSDM variance components from the full dataset
-#     using t-tests, Wilcoxon tests, and Cramer-von Mises tests at both
-#     community and species levels.
+#   Combines individual-level trait observations from:
+#     1. TRY database (output/try_traits_individual.csv from 01)
+#     2. Field measurements (output/field_traits_clean.csv from 02)
+#   Harmonizes units (cm, g/m2, mg/g, ug), converts TRY SLA to LMA (1/SLA),
+#   field heights (mm→cm) and N (% → mg/g).
+#   Retains traits: vegetative_height, LNC, LDMC, LMA, seed_mass, LA.
+#   Calculates species-level means (all observations) and kCV (= CV/(1+CV)
+#   on log-transformed data, for species with >= 5 observations per trait).
+#   Computes species-level trait correlations, merges with Nutrients
+#   indicator and dispersal traits.
 #
 # Input files:
 #   - output/try_traits_individual.csv (from 01_prepare_TRY_traits.R)
 #   - output/field_traits_clean.csv (from 02_prepare_field_trait_data.R)
 #   - output/indicators.csv (from 01_prepare_TRY_traits.R)
 #   - output/dispersal.csv (from 01_prepare_TRY_traits.R)
-#   - output/starter_data_25.04.25.RData (from 04, for coverage assessment)
 #
 # Output files:
-#   Part A:
 #   - output/all_traits_individual.csv (combined individual-level data)
-#   - output/traits_raw.csv (species summaries before imputation)
-#   - output/traits.csv (final imputed traits for JSDM pipeline)
-#   Part B:
-#   - output/community_trait_coverage.csv
-#   - output/species_missing_traits.csv
-#   - output/community_coverage_variance.csv
-#   - output/coverage_bias_summary.csv
-#   - output/species_variance_trait_status.csv
-#   - output/species_bias_summary.csv
-#   - plot/trait_coverage_assessment.pdf
-#   - plot/trait_coverage_bias.pdf
-#   - plot/species_trait_coverage_bias.pdf
+#   - output/traits_raw.csv (species summaries with means, kCV, indicators)
+#   - output/species_trait_correlations.csv
+#   - plot/unit_comparison_field_vs_try.pdf
+#   - plot/trait_distributions_raw_vs_log.pdf
+#   - plot/species_trait_correlations.pdf
 #
-# Requires: R/00_setup/functions_calanda.R (for impute_functional_traits)
+# See also: R/archive/imputation_and_coverage_assessment.R
 # ==============================================================================
 
 library(tidyverse)
 library(here)
-library(gt)
-
-source(here("Calanda_JSDM", "R", "00_setup", "functions_calanda.R"))
-
-# ╔════════════════════════════════════════════════════════════════════════════╗
-# ║  PART A: MERGE TRY + FIELD TRAITS                                       ║
-# ╚════════════════════════════════════════════════════════════════════════════╝
+library(corrplot)
+library(FactoMineR)
+library(factoextra)
+library(ggrepel)
 
 # ==============================================================================
 # 1. LOAD DATA
@@ -89,15 +71,16 @@ dispersal = read_csv(
 )
 
 # ==============================================================================
-# 2. DEFINE TARGET UNITS
+# 2. DEFINE TARGET UNITS AND RETAINED TRAITS
 # ==============================================================================
 
-# Target units for all merged traits (TRY standard)
+# Continuous traits to retain (6 traits)
+continuous_traits = c("vegetative_height", "LNC", "LDMC", "LMA", "seed_mass", "LA")
+
+# Target units for merged traits
 target_units = tibble(
-  trait = c("vegetative_height", "reproductive_height", "LMA", "LA",
-            "LDMC", "LNC", "LCC", "seed_mass", "flowering_phenology"),
-  unit = c("m", "m", "kg/m2", "cm2",
-           "mg/g", "mg/g", "mg/g", "mg", "ordinal")
+  trait = c("vegetative_height", "LMA", "LA", "LDMC", "LNC", "seed_mass"),
+  unit = c("cm", "g/m2", "mm2", "mg/g", "mg/g", "ug")
 )
 
 cat("\n=== Target units for merged traits ===\n")
@@ -108,34 +91,47 @@ print(target_units, n = Inf)
 # ==============================================================================
 cat("\n=== Harmonizing TRY trait names ===\n")
 
-# TRY data is already in long format with TraitName and Value columns
-# Standardize trait names and convert SLA to LMA
+# TRY data: standardize names and keep only target traits
 try_long = try_individual %>%
   mutate(
     trait = case_when(
       TraitName == "N_percent" ~ "LNC",
-      TraitName == "C_percent" ~ "LCC",
       TraitName == "SLA" ~ "SLA",
       TraitName == "LA" ~ "LA",
       TraitName == "LDMC" ~ "LDMC",
       TraitName == "vegetative_height" ~ "vegetative_height",
-      TraitName == "reproductive_height" ~ "reproductive_height",
       TraitName == "seed_mass" ~ "seed_mass",
-      TraitName == "flowering_phenology" ~ "flowering_phenology",
-      TRUE ~ TraitName
+      TRUE ~ NA_character_
     ),
     source = "TRY"
   ) %>%
+  filter(!is.na(trait)) %>%
   select(species_TNRS, trait, value = Value, source)
 
-# Convert SLA (m2/kg) to LMA (kg/m2): LMA = 1/SLA
+# Convert TRY units to target units:
+#   SLA  (mm2/mg = m2/kg) -> LMA (g/m2): LMA = 1/SLA * 1000
+#   LDMC (g/g)            -> mg/g:        * 1000
+#   vegetative_height (m) -> cm:          * 100
+#   seed_mass (mg)        -> ug:          * 1000
+#   LA   (mm2)            -> mm2:         no conversion needed
 n_sla = sum(try_long$trait == "SLA", na.rm = TRUE)
+n_ldmc = sum(try_long$trait == "LDMC", na.rm = TRUE)
 try_long = try_long %>%
   mutate(
-    value = ifelse(trait == "SLA" & value > 0, 1 / value, value),
-    trait = ifelse(trait == "SLA", "LMA", trait)
+    # SLA (mm2/mg = m2/kg) -> LMA (g/m2): 1/SLA gives kg/m2, * 1000 gives g/m2
+    value = ifelse(trait == "SLA" & value > 0, (1 / value) * 1000, value),
+    trait = ifelse(trait == "SLA", "LMA", trait),
+    # LDMC: g/g -> mg/g
+    value = ifelse(trait == "LDMC", value * 1000, value),
+    # vegetative_height: m -> cm
+    value = ifelse(trait == "vegetative_height", value * 100, value),
+    # seed_mass: mg -> ug
+    value = ifelse(trait == "seed_mass", value * 1000, value)
   )
-cat(sprintf("Converted %d TRY SLA observations to LMA (1/SLA, m2/kg -> kg/m2)\n", n_sla))
+cat(sprintf("Converted %d TRY SLA observations to LMA (1/SLA * 1000, mm2/mg -> g/m2)\n", n_sla))
+cat(sprintf("Converted %d TRY LDMC observations from g/g to mg/g (* 1000)\n", n_ldmc))
+cat("Converted TRY vegetative_height from m to cm (* 100)\n")
+cat("Converted TRY seed_mass from mg to ug (* 1000)\n")
 
 cat("TRY traits standardized:", n_distinct(try_long$trait), "traits\n")
 
@@ -145,30 +141,25 @@ cat("TRY traits standardized:", n_distinct(try_long$trait), "traits\n")
 cat("\n=== Converting field units to TRY standard ===\n")
 
 # Field unit conversions:
-#   vegetative_height:   mm -> m    (/ 1000)
-#   reproductive_height: mm -> m    (/ 1000)
+#   vegetative_height:   mm -> cm   (/ 10)
 #   N_content_corr:      % -> mg/g  (* 10)
-#   C_content_corr:      % -> mg/g  (* 10)
-#   LMA:                 kg/m2      (no conversion)
+#   LMA:                 kg/m2 -> g/m2 (* 1000)
 #   LDMC:                mg/g       (no conversion)
 
 field_long = field_individual %>%
   select(
     plant_species,
     vegetative_height,
-    reproductive_height,
     LMA,
     LDMC,
-    N_content_corr,
-    C_content_corr
+    N_content_corr
   ) %>%
   mutate(
-    vegetative_height = vegetative_height / 1000,       # mm -> m
-    reproductive_height = reproductive_height / 1000,   # mm -> m
-    N_content_corr = N_content_corr * 10,               # % -> mg/g
-    C_content_corr = C_content_corr * 10                # % -> mg/g
+    vegetative_height = vegetative_height / 10,          # mm -> cm
+    N_content_corr = N_content_corr * 10,                # % -> mg/g
+    LMA = LMA * 1000                                     # kg/m2 -> g/m2
   ) %>%
-  rename(LNC = N_content_corr, LCC = C_content_corr) %>%
+  rename(LNC = N_content_corr) %>%
   pivot_longer(
     cols = -plant_species,
     names_to = "trait",
@@ -217,6 +208,105 @@ range_check = all_individual %>%
 cat("\nTrait value ranges by source (verify units are compatible):\n")
 print(range_check, n = 30)
 
+# --- Visual unit comparison: Field vs TRY per species and trait ---
+cat("\n=== Generating unit comparison plot ===\n")
+
+# Keep only traits present in both sources
+shared_traits = all_individual %>%
+  group_by(trait) %>%
+  filter(n_distinct(source) == 2) %>%
+  ungroup() %>%
+  distinct(trait) %>%
+  pull(trait)
+
+if (length(shared_traits) > 0) {
+
+  # Compute species-level summaries per source for shared traits
+  species_source_summary = all_individual %>%
+    filter(trait %in% shared_traits) %>%
+    group_by(species_TNRS, trait, source) %>%
+    summarize(
+      median = median(value, na.rm = TRUE),
+      q25 = quantile(value, 0.25, na.rm = TRUE),
+      q75 = quantile(value, 0.75, na.rm = TRUE),
+      n = n(),
+      .groups = "drop"
+    )
+
+  # Add unit labels for facets
+  species_source_summary = species_source_summary %>%
+    left_join(target_units, by = "trait") %>%
+    mutate(facet_label = paste0(trait, " (", unit, ")"))
+
+  # Abbreviate species names: "Genus species" -> "G. species"
+  species_source_summary = species_source_summary %>%
+    mutate(species_short = str_replace(species_TNRS, "^(\\w)\\w+", "\\1."))
+
+  # Keep only species with data from both sources (for direct comparison)
+  both_sources = species_source_summary %>%
+    group_by(species_TNRS, trait) %>%
+    filter(n_distinct(source) == 2) %>%
+    ungroup()
+
+  if (nrow(both_sources) > 0) {
+
+    # Order species within each trait by overall median (manual reorder per facet)
+    both_sources = both_sources %>%
+      group_by(species_short, facet_label) %>%
+      mutate(overall_median = median(median)) %>%
+      group_by(facet_label) %>%
+      mutate(species_rank = dense_rank(overall_median)) %>%
+      ungroup() %>%
+      mutate(species_facet = paste0(species_short, "__", facet_label),
+             species_facet = reorder(species_facet, species_rank))
+
+    # Compute mean of species medians per trait and source (for vertical reference lines)
+    trait_means = both_sources %>%
+      group_by(trait, source, facet_label) %>%
+      summarize(mean_value = mean(median, na.rm = TRUE), .groups = "drop")
+
+    p_compare = ggplot(both_sources,
+                       aes(x = median, y = species_facet)) +
+      geom_vline(data = trait_means, aes(xintercept = mean_value, color = source),
+                 linetype = "dashed", linewidth = 0.5, alpha = 0.7) +
+      geom_pointrange(aes(xmin = q25, xmax = q75, color = source, fill = n),
+                      position = position_dodge(width = 0.6),
+                      size = 0.3, fatten = 3, shape = 21, stroke = 0.5) +
+      facet_wrap(~ facet_label, scales = "free", ncol = 2) +
+      scale_y_discrete(labels = function(x) str_remove(x, "__.*$")) +
+      scale_color_manual(values = c("Field" = "#E76F51", "TRY" = "#2A9D8F")) +
+      scale_fill_viridis_c(trans = "log10", name = "N obs",
+                           option = "viridis", direction = 1) +
+      guides(color = guide_legend(order = 1),
+             fill = guide_colorbar(order = 2)) +
+      labs(x = "Value (median with IQR, dashed lines = dataset means)",
+           y = NULL,
+           color = "Source",
+           title = "Unit harmonization check: Field vs TRY trait distributions",
+           subtitle = "Species with data from both sources; point fill = sample size") +
+      theme_bw() +
+      theme(
+        text = element_text(size = 9),
+        axis.text.y = element_text(size = 6),
+        strip.text = element_text(face = "bold", size = 9),
+        legend.position = "top",
+        panel.grid.major.y = element_line(color = "grey90", linewidth = 0.3)
+      )
+
+    pdf(here("Calanda_JSDM", "plot", "unit_comparison_field_vs_try.pdf"),
+        width = 12, height = max(6, nrow(distinct(both_sources, species_short)) * 0.2))
+    print(p_compare)
+    dev.off()
+
+    cat("Saved plot/unit_comparison_field_vs_try.pdf\n")
+
+  } else {
+    cat("No species with data from both sources — skipping comparison plot.\n")
+  }
+} else {
+  cat("No shared traits between Field and TRY — skipping comparison plot.\n")
+}
+
 cat("Combined dataset:", nrow(all_individual), "observations\n")
 cat("Species:", n_distinct(all_individual$species_TNRS), "\n")
 cat("Traits:", n_distinct(all_individual$trait), "\n")
@@ -247,36 +337,181 @@ write_csv(all_individual, here("Calanda_JSDM", "output", "all_traits_individual.
 cat("\nSaved combined individual data to output/all_traits_individual.csv\n")
 
 # ==============================================================================
-# 6. CALCULATE SPECIES-LEVEL SUMMARIES
+# 6. DISTRIBUTION PLOTS: RAW VS LOG-TRANSFORMED TRAITS
 # ==============================================================================
-cat("\n=== Calculating species-level trait summaries ===\n")
+cat("\n=== Plotting trait distributions (raw vs log-transformed) ===\n")
 
-species_traits = all_individual %>%
+# Prepare raw and log-transformed data for plotting
+dist_data = all_individual %>%
+  mutate(log_value = log(value)) %>%
+  filter(is.finite(log_value))  # Remove log(0) or log(negative)
+
+# Raw distributions
+p_raw = ggplot(dist_data, aes(x = value, fill = source)) +
+  geom_histogram(bins = 50, alpha = 0.6, position = "identity") +
+  facet_wrap(~ trait, scales = "free", ncol = 3) +
+  scale_fill_manual(values = c("Field" = "#E76F51", "TRY" = "#2A9D8F")) +
+  labs(x = "Value (original scale)", y = "Count",
+       title = "Trait distributions (raw values)",
+       fill = "Source") +
+  theme_bw() +
+  theme(legend.position = "top", strip.text = element_text(face = "bold"))
+
+# Log-transformed distributions
+p_log = ggplot(dist_data, aes(x = log_value, fill = source)) +
+  geom_histogram(bins = 50, alpha = 0.6, position = "identity") +
+  facet_wrap(~ trait, scales = "free", ncol = 3) +
+  scale_fill_manual(values = c("Field" = "#E76F51", "TRY" = "#2A9D8F")) +
+  labs(x = "Value (log-transformed)", y = "Count",
+       title = "Trait distributions (log-transformed)",
+       fill = "Source") +
+  theme_bw() +
+  theme(legend.position = "top", strip.text = element_text(face = "bold"))
+
+pdf(here("Calanda_JSDM", "plot", "trait_distributions_raw_vs_log.pdf"),
+    width = 12, height = 14)
+gridExtra::grid.arrange(p_raw, p_log, ncol = 1)
+dev.off()
+
+cat("Saved plot/trait_distributions_raw_vs_log.pdf\n")
+
+# ==============================================================================
+# 7. CALCULATE SPECIES-LEVEL MEANS AND kCV
+# ==============================================================================
+cat("\n=== Calculating species-level means and kCV ===\n")
+
+# Species means: computed from ALL available observations
+species_means = all_individual %>%
   group_by(species_TNRS, trait) %>%
   summarize(
     Mean = mean(value, na.rm = TRUE),
-    Var = var(value, na.rm = TRUE),
     n_obs = n(),
     n_sources = n_distinct(source),
     .groups = "drop"
+  )
+
+# kCV: computed only for species-trait combos with >= 5 observations
+# kCV = CV / (1 + CV), where CV = sd(log(x)) / mean(log(x))
+species_kcv = all_individual %>%
+  group_by(species_TNRS, trait) %>%
+  filter(n() >= 5) %>%
+  summarize(
+    log_mean = mean(log(value), na.rm = TRUE),
+    log_sd = sd(log(value), na.rm = TRUE),
+    .groups = "drop"
   ) %>%
+  mutate(
+    CV = ifelse(log_mean != 0, log_sd / log_mean, NA_real_),
+    kCV = ifelse(!is.na(CV), CV / (1 + CV), NA_real_)
+  ) %>%
+  select(species_TNRS, trait, kCV)
+
+cat(sprintf("Species-trait combinations with >= 5 obs for kCV: %d / %d\n",
+            nrow(species_kcv), nrow(species_means)))
+
+# Combine means and kCV
+species_traits = species_means %>%
+  left_join(species_kcv, by = c("species_TNRS", "trait"))
+
+cat("Species-trait summaries calculated\n")
+
+# Pivot to wide format
+species_traits_wide = species_traits %>%
   pivot_wider(
     names_from = trait,
-    values_from = c(Mean, Var, n_obs, n_sources),
+    values_from = c(Mean, kCV, n_obs, n_sources),
     names_glue = "{.value}_{trait}"
   )
 
-cat("Species summaries calculated for", nrow(species_traits), "species\n")
+cat("Species summaries calculated for", nrow(species_traits_wide), "species\n")
+
+# Show summary of kCV values
+cat("\nkCV summary per trait:\n")
+species_traits %>%
+  group_by(trait) %>%
+  summarize(
+    n_species = n(),
+    kCV_mean = round(mean(kCV, na.rm = TRUE), 3),
+    kCV_median = round(median(kCV, na.rm = TRUE), 3),
+    kCV_min = round(min(kCV, na.rm = TRUE), 3),
+    kCV_max = round(max(kCV, na.rm = TRUE), 3),
+    .groups = "drop"
+  ) %>%
+  print()
 
 # ==============================================================================
-# 7. MERGE WITH INDICATORS AND DISPERSAL
+# 9. SPECIES-LEVEL TRAIT CORRELATIONS
 # ==============================================================================
-cat("\n=== Merging with indicators and dispersal ===\n")
+cat("\n=== Species-level trait correlations ===\n")
 
-# Merge all trait sources
-traits = species_traits %>%
+# Build correlation matrix from species means
+cor_data = species_traits_wide %>%
+  select(starts_with("Mean_")) %>%
+  rename_with(~ str_remove(., "^Mean_"))
+
+# Need at least some complete pairwise observations
+cor_matrix = cor(cor_data, use = "pairwise.complete.obs")
+
+cat("Correlation matrix (pairwise complete observations):\n")
+print(round(cor_matrix, 2))
+
+# Save correlation matrix
+write_csv(
+  as.data.frame(cor_matrix) %>% rownames_to_column("trait"),
+  here("Calanda_JSDM", "output", "species_trait_correlations.csv")
+)
+
+# Plot correlation matrix
+pdf(here("Calanda_JSDM", "plot", "species_trait_correlations.pdf"), width = 8, height = 8)
+corrplot(cor_matrix, method = "ellipse", type = "lower",
+         tl.col = "black", tl.srt = 45, tl.cex = 0.9,
+         addCoef.col = "black", number.cex = 0.7,
+         col = colorRampPalette(c("#E76F51", "white", "#2A9D8F"))(200),
+         title = "Species-level trait correlations (means)",
+         mar = c(0, 0, 2, 0))
+dev.off()
+
+cat("Saved plot/species_trait_correlations.pdf\n")
+cat("Saved output/species_trait_correlations.csv\n")
+
+# Build correlation matrix from species kCV values
+cat("\n=== Species-level kCV correlations ===\n")
+
+cor_kcv_data = species_traits_wide %>%
+  select(starts_with("kCV_")) %>%
+  rename_with(~ str_remove(., "^kCV_"))
+
+cor_kcv_matrix = cor(cor_kcv_data, use = "pairwise.complete.obs")
+
+cat("kCV correlation matrix (pairwise complete observations):\n")
+print(round(cor_kcv_matrix, 2))
+
+write_csv(
+  as.data.frame(cor_kcv_matrix) %>% rownames_to_column("trait"),
+  here("Calanda_JSDM", "output", "species_kcv_correlations.csv")
+)
+
+pdf(here("Calanda_JSDM", "plot", "species_kcv_correlations.pdf"), width = 8, height = 8)
+corrplot(cor_kcv_matrix, method = "ellipse", type = "lower",
+         tl.col = "black", tl.srt = 45, tl.cex = 0.9,
+         addCoef.col = "black", number.cex = 0.7,
+         col = colorRampPalette(c("#E76F51", "white", "#2A9D8F"))(200),
+         title = "Species-level trait correlations (kCV)",
+         mar = c(0, 0, 2, 0))
+dev.off()
+
+cat("Saved plot/species_kcv_correlations.pdf\n")
+cat("Saved output/species_kcv_correlations.csv\n")
+
+# ==============================================================================
+# 10. MERGE WITH INDICATORS AND DISPERSAL
+# ==============================================================================
+cat("\n=== Merging with indicators (Nutrients) and dispersal ===\n")
+
+# Merge indicator traits (Nutrients + dispersal only)
+traits = species_traits_wide %>%
   left_join(dispersal %>% select(species_TNRS, dispersal), by = "species_TNRS") %>%
-  left_join(indicators %>% select(species_TNRS, Light, Moisture, Nutrients, disturbance),
+  left_join(indicators %>% select(species_TNRS, Nutrients),
             by = "species_TNRS")
 
 cat("Merged dataset:", nrow(traits), "species\n")
@@ -285,36 +520,24 @@ cat("Merged dataset:", nrow(traits), "species\n")
 traits_ordered = traits %>%
   select(
     species_TNRS,
-    # Seed and dispersal
-    Mean_seed_mass,
-    Var_seed_mass,
-    dispersal,
-    # Leaf area traits
-    Mean_LA,
-    Var_LA,
-    Mean_LMA,
-    Var_LMA,
-    Mean_LDMC,
-    Var_LDMC,
-    # Plant size
+    # Species means
     Mean_vegetative_height,
-    Var_vegetative_height,
-    Mean_reproductive_height,
-    Var_reproductive_height,
-    # Leaf chemistry
     Mean_LNC,
-    Var_LNC,
-    Mean_LCC,
-    Var_LCC,
-    # Phenology
-    Mean_flowering_phenology,
-    Var_flowering_phenology,
-    # Ecological indicators
-    Light,
-    Moisture,
+    Mean_LDMC,
+    Mean_LMA,
+    Mean_seed_mass,
+    Mean_LA,
+    # kCV values
+    kCV_vegetative_height,
+    kCV_LNC,
+    kCV_LDMC,
+    kCV_LMA,
+    kCV_seed_mass,
+    kCV_LA,
+    # Indicator traits
     Nutrients,
-    disturbance,
-    # Sample sizes (optional, for QC)
+    dispersal,
+    # Sample sizes (for QC)
     starts_with("n_obs_"),
     starts_with("n_sources_")
   )
@@ -324,860 +547,180 @@ write_csv(traits_ordered, here("Calanda_JSDM", "output", "traits_raw.csv"))
 cat("Saved raw traits to output/traits_raw.csv\n")
 
 # ==============================================================================
-# 8. IMPUTE MISSING TRAIT VALUES
+# 11. PCA ON SPECIES MEANS
 # ==============================================================================
-cat("\n=== Imputing missing trait values ===\n")
+cat("\n=== PCA on species-level trait means ===\n")
 
-# Select only the columns needed for imputation (means and categorical)
-traits_for_imputation = traits_ordered %>%
-  select(
-    species_TNRS,
-    Mean_seed_mass,
-    dispersal,
-    Mean_LA,
-    Mean_LMA,
-    Mean_LDMC,
-    Mean_vegetative_height,
-    Mean_reproductive_height,
-    Mean_LNC,
-    Mean_LCC,
-    Mean_flowering_phenology,
-    Light,
-    Moisture,
-    Nutrients,
-    disturbance,
-    # Keep variances for output
-    starts_with("Var_")
-  )
+# Helper: abbreviate species name to 4+4 format (e.g., "Agrostis capillaris" -> "AgroCapi")
+abbrev_species = function(x) {
+  parts = str_split(x, "\\s+")
+  sapply(parts, function(p) {
+    if (length(p) >= 2) {
+      paste0(str_to_title(str_sub(p[1], 1, 4)), str_to_title(str_sub(p[2], 1, 4)))
+    } else {
+      str_sub(p[1], 1, 8)
+    }
+  })
+}
 
-# Variables to impute
-variables_to_impute = c(
-  "Mean_seed_mass",
-  "dispersal",
-  "Mean_LA",
-  "Mean_LMA",
-  "Mean_LDMC",
-  "Mean_vegetative_height",
-  "Mean_reproductive_height",
-  "Mean_LNC",
-  "Mean_LCC",
-  "Mean_flowering_phenology",
-  "Light",
-  "Moisture",
-  "Nutrients",
-  "disturbance"
-)
+# Build wide matrix of trait means
+pca_means_data = species_traits_wide %>%
+  select(species_TNRS, starts_with("Mean_")) %>%
+  column_to_rownames("species_TNRS")
 
-# Show missing data before imputation
-cat("\nMissing data before imputation:\n")
-traits_for_imputation %>%
-  summarize(across(everything(), ~ round(100 * mean(is.na(.)), 1))) %>%
-  pivot_longer(everything(), names_to = "variable", values_to = "percent_missing") %>%
-  filter(percent_missing > 0) %>%
-  arrange(desc(percent_missing)) %>%
-  print(n = 25)
+# Drop species with any NA (PCA requires complete cases)
+n_before = nrow(pca_means_data)
+pca_means_data = pca_means_data[complete.cases(pca_means_data), , drop = FALSE]
+cat(sprintf("Species with complete mean data: %d / %d\n", nrow(pca_means_data), n_before))
 
-# Impute missing values using random forest
-imp_traits = impute_functional_traits(
-  traits_for_imputation,
-  variables_to_impute = variables_to_impute,
-  m = 30,
-  maxiter = 100,
-  num_trees = 500,
-  seed = 123,
-  validation_fraction = 0.3
-)
+if (nrow(pca_means_data) >= 5 && ncol(pca_means_data) >= 2) {
 
-# Display imputation performance
-cat("\nImputation performance:\n")
-traits_for_imputation %>%
-  summarize(across(everything(), ~ mean(is.na(.)) * 100)) %>%
-  pivot_longer(cols = everything(),
-               names_to = "variable",
-               values_to = "percent_missing") %>%
-  arrange(desc(percent_missing)) %>%
-  right_join(imp_traits$performance, by = "variable") %>%
-  mutate(
-    percent_missing = round(percent_missing),
-    r_squared = round(r_squared, 2)
-  ) %>%
-  select(variable, percent_missing, r_squared) %>%
-  gt()
+  pca_means_res = PCA(pca_means_data, scale.unit = TRUE, graph = FALSE)
 
-# Extract imputed data and clean column names
-traits_imputed = imp_traits$imputed_data %>%
-  select(species_TNRS, starts_with("Var_"), contains("_final")) %>%
-  rename_with(~ str_remove(., "_final$"), ends_with("_final"))
+  # Prepare coordinates
+  pca_means_ind = get_pca_ind(pca_means_res)$coord %>%
+    as.data.frame() %>%
+    rownames_to_column("species_TNRS") %>%
+    mutate(species_label = abbrev_species(species_TNRS))
 
-# Save final imputed traits
-write_csv(traits_imputed, here("Calanda_JSDM", "output", "traits.csv"))
-cat("\nSaved imputed traits to output/traits.csv\n")
+  pca_means_var = get_pca_var(pca_means_res)$coord %>%
+    as.data.frame() %>%
+    rownames_to_column("trait") %>%
+    mutate(trait_label = str_remove(trait, "^Mean_"))
+
+  eig_means = get_eigenvalue(pca_means_res)
+  pc1_var = round(eig_means[1, "variance.percent"], 1)
+  pc2_var = round(eig_means[2, "variance.percent"], 1)
+  cat(sprintf("Means PCA — PC1: %.1f%%, PC2: %.1f%%\n", pc1_var, pc2_var))
+
+  # Arrow scale factor
+  arrow_scale = max(abs(pca_means_ind$Dim.1), abs(pca_means_ind$Dim.2)) /
+    max(abs(pca_means_var$Dim.1), abs(pca_means_var$Dim.2)) * 0.8
+
+  p_pca_means = ggplot() +
+    geom_segment(data = pca_means_var,
+                 aes(x = 0, y = 0, xend = Dim.1 * arrow_scale, yend = Dim.2 * arrow_scale),
+                 arrow = arrow(length = unit(0.2, "cm")),
+                 color = "grey40", linewidth = 0.5) +
+    geom_text(data = pca_means_var,
+              aes(x = Dim.1 * arrow_scale * 1.1, y = Dim.2 * arrow_scale * 1.1,
+                  label = trait_label),
+              color = "grey30", size = 3, fontface = "bold") +
+    geom_point(data = pca_means_ind,
+               aes(x = Dim.1, y = Dim.2),
+               size = 2, alpha = 0.7, color = "#2A9D8F") +
+    geom_text_repel(data = pca_means_ind,
+                    aes(x = Dim.1, y = Dim.2, label = species_label),
+                    size = 2, max.overlaps = 20, segment.size = 0.2) +
+    labs(x = sprintf("PC1 (%.1f%%)", pc1_var),
+         y = sprintf("PC2 (%.1f%%)", pc2_var),
+         title = "PCA of species-level trait means",
+         subtitle = sprintf("%d species, %d traits", nrow(pca_means_data), ncol(pca_means_data))) +
+    theme_bw() +
+    theme(legend.position = "none")
+
+  pdf(here("Calanda_JSDM", "plot", "pca_species_means.pdf"), width = 10, height = 8)
+  print(p_pca_means)
+  dev.off()
+
+  write_csv(as.data.frame(eig_means) %>% rownames_to_column("PC"),
+            here("Calanda_JSDM", "output", "pca_means_eigenvalues.csv"))
+  cat("Saved plot/pca_species_means.pdf\n")
+
+} else {
+  cat("Not enough complete species for means PCA — skipping.\n")
+}
 
 # ==============================================================================
-# 9. MERGE SUMMARY
+# 12. PCA ON SPECIES kCV
+# ==============================================================================
+cat("\n=== PCA on species-level kCV ===\n")
+
+# Build wide matrix of kCV values
+pca_kcv_data = species_traits_wide %>%
+  select(species_TNRS, starts_with("kCV_")) %>%
+  column_to_rownames("species_TNRS")
+
+# Drop species with any NA
+n_before = nrow(pca_kcv_data)
+pca_kcv_data = pca_kcv_data[complete.cases(pca_kcv_data), , drop = FALSE]
+cat(sprintf("Species with complete kCV data: %d / %d\n", nrow(pca_kcv_data), n_before))
+
+if (nrow(pca_kcv_data) >= 5 && ncol(pca_kcv_data) >= 2) {
+
+  pca_kcv_res = PCA(pca_kcv_data, scale.unit = TRUE, graph = FALSE)
+
+  # Prepare coordinates
+  pca_kcv_ind = get_pca_ind(pca_kcv_res)$coord %>%
+    as.data.frame() %>%
+    rownames_to_column("species_TNRS") %>%
+    mutate(species_label = abbrev_species(species_TNRS))
+
+  pca_kcv_var = get_pca_var(pca_kcv_res)$coord %>%
+    as.data.frame() %>%
+    rownames_to_column("trait") %>%
+    mutate(trait_label = str_remove(trait, "^kCV_"))
+
+  eig_kcv = get_eigenvalue(pca_kcv_res)
+  pc1_var = round(eig_kcv[1, "variance.percent"], 1)
+  pc2_var = round(eig_kcv[2, "variance.percent"], 1)
+  cat(sprintf("kCV PCA — PC1: %.1f%%, PC2: %.1f%%\n", pc1_var, pc2_var))
+
+  # Arrow scale factor
+  arrow_scale = max(abs(pca_kcv_ind$Dim.1), abs(pca_kcv_ind$Dim.2)) /
+    max(abs(pca_kcv_var$Dim.1), abs(pca_kcv_var$Dim.2)) * 0.8
+
+  p_pca_kcv = ggplot() +
+    geom_segment(data = pca_kcv_var,
+                 aes(x = 0, y = 0, xend = Dim.1 * arrow_scale, yend = Dim.2 * arrow_scale),
+                 arrow = arrow(length = unit(0.2, "cm")),
+                 color = "grey40", linewidth = 0.5) +
+    geom_text(data = pca_kcv_var,
+              aes(x = Dim.1 * arrow_scale * 1.1, y = Dim.2 * arrow_scale * 1.1,
+                  label = trait_label),
+              color = "grey30", size = 3, fontface = "bold") +
+    geom_point(data = pca_kcv_ind,
+               aes(x = Dim.1, y = Dim.2),
+               size = 2, alpha = 0.7, color = "#E76F51") +
+    geom_text_repel(data = pca_kcv_ind,
+                    aes(x = Dim.1, y = Dim.2, label = species_label),
+                    size = 2, max.overlaps = 20, segment.size = 0.2) +
+    labs(x = sprintf("PC1 (%.1f%%)", pc1_var),
+         y = sprintf("PC2 (%.1f%%)", pc2_var),
+         title = "PCA of species-level kCV (intraspecific variability)",
+         subtitle = sprintf("%d species, %d traits", nrow(pca_kcv_data), ncol(pca_kcv_data))) +
+    theme_bw() +
+    theme(legend.position = "none")
+
+  pdf(here("Calanda_JSDM", "plot", "pca_species_kcv.pdf"), width = 10, height = 8)
+  print(p_pca_kcv)
+  dev.off()
+
+  write_csv(as.data.frame(eig_kcv) %>% rownames_to_column("PC"),
+            here("Calanda_JSDM", "output", "pca_kcv_eigenvalues.csv"))
+  cat("Saved plot/pca_species_kcv.pdf\n")
+
+} else {
+  cat("Not enough complete species for kCV PCA — skipping.\n")
+}
+
+# ==============================================================================
+# 13. MERGE SUMMARY
 # ==============================================================================
 cat("\n=== Merge Summary ===\n")
 cat("TRY individual observations:", nrow(try_individual), "\n")
 cat("Field individual observations:", nrow(field_individual), "\n")
 cat("Combined individual observations:", nrow(all_individual), "\n")
-cat("Species in final traits:", nrow(traits_imputed), "\n")
+cat("Species-trait combos with kCV (>= 5 obs):", nrow(species_kcv), "\n")
+cat("Species in final traits:", nrow(traits_ordered), "\n")
 
-cat("\nTrait coverage in final imputed dataset:\n")
-traits_imputed %>%
-  summarize(across(everything(), ~ round(100 * mean(!is.na(.)), 1))) %>%
-  pivot_longer(everything(), names_to = "variable", values_to = "percent_complete") %>%
-  arrange(desc(percent_complete)) %>%
+cat("\nMissing data in traits_raw.csv:\n")
+traits_ordered %>%
+  summarize(across(everything(), ~ round(100 * mean(is.na(.)), 1))) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "percent_missing") %>%
+  filter(percent_missing > 0) %>%
+  arrange(desc(percent_missing)) %>%
   print(n = 30)
 
 cat("\n=== Merge completed successfully ===\n")
-
-# ╔════════════════════════════════════════════════════════════════════════════╗
-# ║  PART B: ASSESS TRAIT COVERAGE AND BIAS                                  ║
-# ║  (requires starter_data_25.04.25.RData from a prior run of step 03)     ║
-# ╚════════════════════════════════════════════════════════════════════════════╝
-
-starter_data_path = here("Calanda_JSDM", "output", "starter_data_25.04.25.RData")
-
-if (!file.exists(starter_data_path)) {
-  cat("\n=== Skipping coverage assessment ===\n")
-  cat("starter_data_25.04.25.RData not found (run 03_prepare_climate_vegetation_data.R first).\n")
-  cat("Coverage assessment will run on the next pass.\n")
-} else {
-
-library(dgof)
-library(patchwork)
-
-cat("\n=== Trait Coverage Assessment ===\n")
-
-# Get list of species with trait data from all_individual (computed in Part A)
-species_with_traits = all_individual %>%
-  distinct(species_TNRS) %>%
-  pull(species_TNRS)
-
-cat(sprintf("\nTotal species with trait data: %d\n", length(species_with_traits)))
-
-# Load abundance data and JSDM results
-cat("\nLoading data from starter_data_25.04.25.RData...\n")
-load(starter_data_path)
-
-# Rename dotted objects from RData to snake_case
-veg_abund = veg.abund
-rm(veg.abund)
-
-cat(sprintf("\nNumber of communities (plots): %d\n", nrow(veg_abund)))
-cat(sprintf("Number of species in communities: %d\n", ncol(veg_abund)))
-
-# Convert veg_abund to long format for easier analysis
-abund_long = veg_abund %>%
-  as.data.frame() %>%
-  rownames_to_column("plot_id") %>%
-  pivot_longer(-plot_id, names_to = "species", values_to = "rel_cover") %>%
-  filter(rel_cover > 0)  # Only keep species present in each plot
-
-# Calculate coverage metrics for each community
-community_coverage = abund_long %>%
-  group_by(plot_id) %>%
-  summarize(
-    # Total species richness
-    n_species = n(),
-
-    # Species with trait data
-    n_species_with_traits = sum(species %in% species_with_traits),
-
-    # Percentage of species with traits (presence/absence)
-    pct_species_with_traits = 100 * n_species_with_traits / n_species,
-
-    # Total relative cover
-    total_cover = sum(rel_cover),
-
-    # Relative cover of species with traits
-    cover_with_traits = sum(rel_cover[species %in% species_with_traits]),
-
-    # Percentage of cover represented by species with traits
-    pct_cover_with_traits = 100 * cover_with_traits / total_cover,
-
-    .groups = "drop"
-  )
-
-# Summary statistics
-cat("\n=== Coverage Summary Statistics ===\n")
-cat("\n--- Species Richness-based Coverage (Presence/Absence) ---\n")
-cat(sprintf("Mean: %.1f%%\n", mean(community_coverage$pct_species_with_traits)))
-cat(sprintf("Median: %.1f%%\n", median(community_coverage$pct_species_with_traits)))
-cat(sprintf("Range: %.1f%% - %.1f%%\n",
-            min(community_coverage$pct_species_with_traits),
-            max(community_coverage$pct_species_with_traits)))
-cat(sprintf("SD: %.1f%%\n", sd(community_coverage$pct_species_with_traits)))
-
-cat("\n--- Relative Cover-based Coverage ---\n")
-cat(sprintf("Mean: %.1f%%\n", mean(community_coverage$pct_cover_with_traits)))
-cat(sprintf("Median: %.1f%%\n", median(community_coverage$pct_cover_with_traits)))
-cat(sprintf("Range: %.1f%% - %.1f%%\n",
-            min(community_coverage$pct_cover_with_traits),
-            max(community_coverage$pct_cover_with_traits)))
-cat(sprintf("SD: %.1f%%\n", sd(community_coverage$pct_cover_with_traits)))
-
-# Identify communities with low coverage
-low_coverage_pa = community_coverage %>%
-  filter(pct_species_with_traits < 80) %>%
-  arrange(pct_species_with_traits)
-
-low_coverage_cover = community_coverage %>%
-  filter(pct_cover_with_traits < 80) %>%
-  arrange(pct_cover_with_traits)
-
-cat(sprintf("\n--- Communities with <80%% species coverage: %d ---\n", nrow(low_coverage_pa)))
-if(nrow(low_coverage_pa) > 0) {
-  print(low_coverage_pa %>% select(plot_id, n_species, n_species_with_traits, pct_species_with_traits))
-}
-
-cat(sprintf("\n--- Communities with <80%% cover coverage: %d ---\n", nrow(low_coverage_cover)))
-if(nrow(low_coverage_cover) > 0) {
-  print(low_coverage_cover %>% select(plot_id, total_cover, cover_with_traits, pct_cover_with_traits))
-}
-
-# Identify species that are common but lack trait data
-species_missing_traits = abund_long %>%
-  filter(!species %in% species_with_traits) %>%
-  group_by(species) %>%
-  summarize(
-    n_occurrences = n(),
-    total_cover = sum(rel_cover),
-    mean_cover = mean(rel_cover),
-    .groups = "drop"
-  ) %>%
-  arrange(desc(n_occurrences))
-
-cat(sprintf("\n--- Species lacking trait data: %d ---\n", nrow(species_missing_traits)))
-cat("Top 20 most common species without trait data:\n")
-print(species_missing_traits %>% head(20))
-
-# Save results
-write_csv(community_coverage, here("Calanda_JSDM", "output", "community_trait_coverage.csv"))
-write_csv(species_missing_traits, here("Calanda_JSDM", "output", "species_missing_traits.csv"))
-
-cat("\n=== Output files created ===\n")
-cat("- output/community_trait_coverage.csv: Coverage metrics for each community\n")
-cat("- output/species_missing_traits.csv: Species lacking trait data with their prevalence\n")
-
-# Create visualization
-
-# Histogram of coverage by presence/absence
-p1 = ggplot(community_coverage, aes(x = pct_species_with_traits)) +
-  geom_histogram(bins = 30, fill = "#4ECDC4", color = "black", alpha = 0.7) +
-  geom_vline(xintercept = median(community_coverage$pct_species_with_traits),
-             linetype = "dashed", color = "red", linewidth = 1) +
-  labs(x = "% of species with trait data",
-       y = "Number of communities",
-       title = "Trait coverage by species richness") +
-  theme_bw() +
-  theme(text = element_text(size = 12))
-
-# Histogram of coverage by relative cover
-p2 = ggplot(community_coverage, aes(x = pct_cover_with_traits)) +
-  geom_histogram(bins = 30, fill = "#FF6B6B", color = "black", alpha = 0.7) +
-  geom_vline(xintercept = median(community_coverage$pct_cover_with_traits),
-             linetype = "dashed", color = "red", linewidth = 1) +
-  labs(x = "% of relative cover with trait data",
-       y = "Number of communities",
-       title = "Trait coverage by relative cover") +
-  theme_bw() +
-  theme(text = element_text(size = 12))
-
-# Scatter plot comparing the two metrics
-p3 = ggplot(community_coverage, aes(x = pct_species_with_traits,
-                                     y = pct_cover_with_traits)) +
-  geom_point(alpha = 0.5, size = 2) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
-  labs(x = "% species with trait data",
-       y = "% cover with trait data",
-       title = "Comparison of coverage metrics") +
-  theme_bw() +
-  theme(text = element_text(size = 12))
-
-# Species richness vs coverage
-p4 = ggplot(community_coverage, aes(x = n_species, y = pct_cover_with_traits)) +
-  geom_point(alpha = 0.5, size = 2) +
-  geom_smooth(method = "lm", se = TRUE, color = "#4ECDC4") +
-  labs(x = "Species richness",
-       y = "% cover with trait data",
-       title = "Coverage vs. species richness") +
-  theme_bw() +
-  theme(text = element_text(size = 12))
-
-# Combine plots
-p_combined = (p1 | p2) / (p3 | p4)
-
-pdf(here("Calanda_JSDM", "plot", "trait_coverage_assessment.pdf"), width = 12, height = 10)
-print(p_combined)
-dev.off()
-
-cat("\n- plot/trait_coverage_assessment.pdf: Visualization of trait coverage\n")
-
-# ==============================================================================
-# BIAS ASSESSMENT: Check if high-coverage communities differ in variance components
-# ==============================================================================
-cat("\n=== Checking for bias in variance components ===\n")
-
-# Extract variance components from JSDM results (res loaded from RData above)
-
-variance_data = res$internals$Sites %>%
-  as.data.frame() %>%
-  rownames_to_column("plot_id") %>%
-  select(plot_id, env, codist, spa) %>%
-  mutate(
-    total = env + codist + spa,
-    env_prop = env / total,
-    codist_prop = codist / total,
-    spa_prop = spa / total
-  )
-
-# Merge with coverage data
-combined = community_coverage %>%
-  left_join(variance_data, by = "plot_id") %>%
-  mutate(
-    coverage_group = ifelse(pct_cover_with_traits >= 75, ">=75% coverage", "All data")
-  )
-
-# Create a dataset that includes all data as one group and high-coverage as another
-all_data = combined %>%
-  mutate(coverage_group = "All data")
-
-high_coverage = combined %>%
-  filter(pct_cover_with_traits >= 75) %>%
-  mutate(coverage_group = ">=75% coverage")
-
-comparison_data = bind_rows(all_data, high_coverage)
-
-cat(sprintf("\nTotal communities: %d\n", nrow(combined)))
-cat(sprintf("Communities with >=75%% coverage: %d (%.1f%%)\n",
-            sum(combined$pct_cover_with_traits >= 75),
-            100 * mean(combined$pct_cover_with_traits >= 75)))
-
-# Statistical tests comparing all data vs >=75% coverage
-cat("\n=== Statistical tests (All data vs >=75% coverage) ===\n")
-
-# T-tests (for means)
-test_env = t.test(all_data$env, high_coverage$env)
-test_codist = t.test(all_data$codist, high_coverage$codist)
-test_spa = t.test(all_data$spa, high_coverage$spa)
-test_env_prop = t.test(all_data$env_prop, high_coverage$env_prop)
-test_codist_prop = t.test(all_data$codist_prop, high_coverage$codist_prop)
-test_spa_prop = t.test(all_data$spa_prop, high_coverage$spa_prop)
-
-# Wilcoxon tests (for medians)
-wilcox_env = wilcox.test(all_data$env, high_coverage$env)
-wilcox_codist = wilcox.test(all_data$codist, high_coverage$codist)
-wilcox_spa = wilcox.test(all_data$spa, high_coverage$spa)
-wilcox_env_prop = wilcox.test(all_data$env_prop, high_coverage$env_prop)
-wilcox_codist_prop = wilcox.test(all_data$codist_prop, high_coverage$codist_prop)
-wilcox_spa_prop = wilcox.test(all_data$spa_prop, high_coverage$spa_prop)
-
-# Cramer-von Mises tests (for entire distributions)
-cvm_env = cvm.test(high_coverage$env, all_data$env)
-cvm_codist = cvm.test(high_coverage$codist, all_data$codist)
-cvm_spa = cvm.test(high_coverage$spa, all_data$spa)
-cvm_env_prop = cvm.test(high_coverage$env_prop, all_data$env_prop)
-cvm_codist_prop = cvm.test(high_coverage$codist_prop, all_data$codist_prop)
-cvm_spa_prop = cvm.test(high_coverage$spa_prop, all_data$spa_prop)
-
-cat("\n--- Raw variance (t-tests for means) ---\n")
-cat(sprintf("Environment: t=%.3f, p=%.4f %s\n", test_env$statistic, test_env$p.value,
-            ifelse(test_env$p.value < 0.05, "***", "")))
-cat(sprintf("Co-distribution: t=%.3f, p=%.4f %s\n", test_codist$statistic, test_codist$p.value,
-            ifelse(test_codist$p.value < 0.05, "***", "")))
-cat(sprintf("Spatial: t=%.3f, p=%.4f %s\n", test_spa$statistic, test_spa$p.value,
-            ifelse(test_spa$p.value < 0.05, "***", "")))
-
-cat("\n--- Raw variance (Wilcoxon tests for medians) ---\n")
-cat(sprintf("Environment: W=%.1f, p=%.4f %s\n", wilcox_env$statistic, wilcox_env$p.value,
-            ifelse(wilcox_env$p.value < 0.05, "***", "")))
-cat(sprintf("Co-distribution: W=%.1f, p=%.4f %s\n", wilcox_codist$statistic, wilcox_codist$p.value,
-            ifelse(wilcox_codist$p.value < 0.05, "***", "")))
-cat(sprintf("Spatial: W=%.1f, p=%.4f %s\n", wilcox_spa$statistic, wilcox_spa$p.value,
-            ifelse(wilcox_spa$p.value < 0.05, "***", "")))
-
-cat("\n--- Proportional variance (t-tests for means) ---\n")
-cat(sprintf("Environment prop: t=%.3f, p=%.4f %s\n", test_env_prop$statistic, test_env_prop$p.value,
-            ifelse(test_env_prop$p.value < 0.05, "***", "")))
-cat(sprintf("Co-distribution prop: t=%.3f, p=%.4f %s\n", test_codist_prop$statistic, test_codist_prop$p.value,
-            ifelse(test_codist_prop$p.value < 0.05, "***", "")))
-cat(sprintf("Spatial prop: t=%.3f, p=%.4f %s\n", test_spa_prop$statistic, test_spa_prop$p.value,
-            ifelse(test_spa_prop$p.value < 0.05, "***", "")))
-
-cat("\n--- Proportional variance (Wilcoxon tests for medians) ---\n")
-cat(sprintf("Environment prop: W=%.1f, p=%.4f %s\n", wilcox_env_prop$statistic, wilcox_env_prop$p.value,
-            ifelse(wilcox_env_prop$p.value < 0.05, "***", "")))
-cat(sprintf("Co-distribution prop: W=%.1f, p=%.4f %s\n", wilcox_codist_prop$statistic, wilcox_codist_prop$p.value,
-            ifelse(wilcox_codist_prop$p.value < 0.05, "***", "")))
-cat(sprintf("Spatial prop: W=%.1f, p=%.4f %s\n", wilcox_spa_prop$statistic, wilcox_spa_prop$p.value,
-            ifelse(wilcox_spa_prop$p.value < 0.05, "***", "")))
-
-cat("\n--- Raw variance (Cramer-von Mises tests for distributions) ---\n")
-cat(sprintf("Environment: CvM=%.4f, p=%.4f %s\n", cvm_env$statistic, cvm_env$p.value,
-            ifelse(cvm_env$p.value < 0.05, "***", "")))
-cat(sprintf("Co-distribution: CvM=%.4f, p=%.4f %s\n", cvm_codist$statistic, cvm_codist$p.value,
-            ifelse(cvm_codist$p.value < 0.05, "***", "")))
-cat(sprintf("Spatial: CvM=%.4f, p=%.4f %s\n", cvm_spa$statistic, cvm_spa$p.value,
-            ifelse(cvm_spa$p.value < 0.05, "***", "")))
-
-cat("\n--- Proportional variance (Cramer-von Mises tests for distributions) ---\n")
-cat(sprintf("Environment prop: CvM=%.4f, p=%.4f %s\n", cvm_env_prop$statistic, cvm_env_prop$p.value,
-            ifelse(cvm_env_prop$p.value < 0.05, "***", "")))
-cat(sprintf("Co-distribution prop: CvM=%.4f, p=%.4f %s\n", cvm_codist_prop$statistic, cvm_codist_prop$p.value,
-            ifelse(cvm_codist_prop$p.value < 0.05, "***", "")))
-cat(sprintf("Spatial prop: CvM=%.4f, p=%.4f %s\n", cvm_spa_prop$statistic, cvm_spa_prop$p.value,
-            ifelse(cvm_spa_prop$p.value < 0.05, "***", "")))
-
-# Summary statistics
-cat("\n=== Summary statistics by group ===\n")
-summary_stats = comparison_data %>%
-  group_by(coverage_group) %>%
-  summarize(
-    n = n(),
-    env_mean = mean(env, na.rm = TRUE), env_median = median(env, na.rm = TRUE), env_sd = sd(env, na.rm = TRUE),
-    codist_mean = mean(codist, na.rm = TRUE), codist_median = median(codist, na.rm = TRUE), codist_sd = sd(codist, na.rm = TRUE),
-    spa_mean = mean(spa, na.rm = TRUE), spa_median = median(spa, na.rm = TRUE), spa_sd = sd(spa, na.rm = TRUE),
-    env_prop_mean = mean(env_prop, na.rm = TRUE), env_prop_median = median(env_prop, na.rm = TRUE), env_prop_sd = sd(env_prop, na.rm = TRUE),
-    codist_prop_mean = mean(codist_prop, na.rm = TRUE), codist_prop_median = median(codist_prop, na.rm = TRUE), codist_prop_sd = sd(codist_prop, na.rm = TRUE),
-    spa_prop_mean = mean(spa_prop, na.rm = TRUE), spa_prop_median = median(spa_prop, na.rm = TRUE), spa_prop_sd = sd(spa_prop, na.rm = TRUE),
-    .groups = "drop"
-  )
-print(summary_stats)
-
-# Calculate mean and median differences (with NA removal)
-mean_diff_env = mean(all_data$env, na.rm = TRUE) - mean(high_coverage$env, na.rm = TRUE)
-mean_diff_codist = mean(all_data$codist, na.rm = TRUE) - mean(high_coverage$codist, na.rm = TRUE)
-mean_diff_spa = mean(all_data$spa, na.rm = TRUE) - mean(high_coverage$spa, na.rm = TRUE)
-mean_diff_env_prop = mean(all_data$env_prop, na.rm = TRUE) - mean(high_coverage$env_prop, na.rm = TRUE)
-mean_diff_codist_prop = mean(all_data$codist_prop, na.rm = TRUE) - mean(high_coverage$codist_prop, na.rm = TRUE)
-mean_diff_spa_prop = mean(all_data$spa_prop, na.rm = TRUE) - mean(high_coverage$spa_prop, na.rm = TRUE)
-
-median_diff_env = median(all_data$env, na.rm = TRUE) - median(high_coverage$env, na.rm = TRUE)
-median_diff_codist = median(all_data$codist, na.rm = TRUE) - median(high_coverage$codist, na.rm = TRUE)
-median_diff_spa = median(all_data$spa, na.rm = TRUE) - median(high_coverage$spa, na.rm = TRUE)
-median_diff_env_prop = median(all_data$env_prop, na.rm = TRUE) - median(high_coverage$env_prop, na.rm = TRUE)
-median_diff_codist_prop = median(all_data$codist_prop, na.rm = TRUE) - median(high_coverage$codist_prop, na.rm = TRUE)
-median_diff_spa_prop = median(all_data$spa_prop, na.rm = TRUE) - median(high_coverage$spa_prop, na.rm = TRUE)
-
-# Store t-test, Wilcoxon, and Cramer-von Mises results for plotting
-test_results = data.frame(
-  component = c("Environment", "Species associations", "Spatial",
-                "Environment", "Species associations", "Spatial"),
-  variance_type = c(rep("Raw variance", 3), rep("Proportional variance", 3)),
-  p_value_t = c(test_env$p.value, test_codist$p.value, test_spa$p.value,
-                test_env_prop$p.value, test_codist_prop$p.value, test_spa_prop$p.value),
-  p_value_w = c(wilcox_env$p.value, wilcox_codist$p.value, wilcox_spa$p.value,
-                wilcox_env_prop$p.value, wilcox_codist_prop$p.value, wilcox_spa_prop$p.value),
-  p_value_cvm = c(cvm_env$p.value, cvm_codist$p.value, cvm_spa$p.value,
-                  cvm_env_prop$p.value, cvm_codist_prop$p.value, cvm_spa_prop$p.value),
-  mean_diff = c(mean_diff_env, mean_diff_codist, mean_diff_spa,
-                mean_diff_env_prop, mean_diff_codist_prop, mean_diff_spa_prop),
-  median_diff = c(median_diff_env, median_diff_codist, median_diff_spa,
-                  median_diff_env_prop, median_diff_codist_prop, median_diff_spa_prop)
-) %>%
-  mutate(
-    sig_label_t = case_when(
-      p_value_t < 0.001 ~ "***",
-      p_value_t < 0.01 ~ "**",
-      p_value_t < 0.05 ~ "*",
-      TRUE ~ "ns"
-    ),
-    sig_label_w = case_when(
-      p_value_w < 0.001 ~ "***",
-      p_value_w < 0.01 ~ "**",
-      p_value_w < 0.05 ~ "*",
-      TRUE ~ "ns"
-    ),
-    sig_label_cvm = case_when(
-      p_value_cvm < 0.001 ~ "***",
-      p_value_cvm < 0.01 ~ "**",
-      p_value_cvm < 0.05 ~ "*",
-      TRUE ~ "ns"
-    ),
-    label = sprintf("Mean D=%.3f (t: p=%.4f %s)\nMedian D=%.3f (W: p=%.4f %s)\nDistribution (CvM: p=%.4f %s)",
-                    mean_diff, p_value_t, sig_label_t,
-                    median_diff, p_value_w, sig_label_w,
-                    p_value_cvm, sig_label_cvm)
-  )
-
-# Save combined data
-write_csv(combined, here("Calanda_JSDM", "output", "community_coverage_variance.csv"))
-write_csv(summary_stats, here("Calanda_JSDM", "output", "coverage_bias_summary.csv"))
-
-cat("\n- output/community_coverage_variance.csv: Combined coverage and variance data\n")
-cat("- output/coverage_bias_summary.csv: Summary statistics by coverage group\n")
-
-# ==============================================================================
-# BIAS VISUALIZATIONS
-# ==============================================================================
-cat("\n=== Creating bias assessment plots ===\n")
-
-# Prepare data for plotting
-plot_data_long = comparison_data %>%
-  select(plot_id, coverage_group, env, codist, spa, env_prop, codist_prop, spa_prop) %>%
-  pivot_longer(cols = c(env, codist, spa),
-               names_to = "component", values_to = "raw_value") %>%
-  pivot_longer(cols = c(env_prop, codist_prop, spa_prop),
-               names_to = "component_prop", values_to = "prop_value") %>%
-  filter(gsub("_prop", "", component_prop) == component) %>%
-  mutate(
-    component_label = factor(case_when(
-      component == "env" ~ "Environment",
-      component == "codist" ~ "Species associations",
-      component == "spa" ~ "Spatial"
-    ), levels = c("Environment", "Species associations", "Spatial"))
-  )
-
-# Add test results for annotations
-test_results_raw = test_results %>%
-  filter(variance_type == "Raw variance") %>%
-  mutate(component_label = factor(component, levels = c("Environment", "Species associations", "Spatial")))
-
-test_results_prop = test_results %>%
-  filter(variance_type == "Proportional variance") %>%
-  mutate(component_label = factor(component, levels = c("Environment", "Species associations", "Spatial")))
-
-# Calculate summary statistics for overlaying mean and median points
-summary_points = plot_data_long %>%
-  group_by(coverage_group, component_label) %>%
-  summarize(
-    mean_raw = mean(raw_value, na.rm = TRUE),
-    median_raw = median(raw_value, na.rm = TRUE),
-    mean_prop = mean(prop_value, na.rm = TRUE),
-    median_prop = median(prop_value, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-# Violin plots for raw variance with mean/median points and test annotations
-p_violin_raw = ggplot(plot_data_long, aes(x = coverage_group, y = raw_value, fill = coverage_group)) +
-  geom_violin(alpha = 0.6, trim = FALSE) +
-  geom_point(data = summary_points, aes(x = coverage_group, y = mean_raw),
-             color = "red", size = 3, shape = 18, inherit.aes = FALSE) +
-  geom_point(data = summary_points, aes(x = coverage_group, y = median_raw),
-             color = "blue", size = 3, shape = 16, inherit.aes = FALSE) +
-  facet_wrap(~ component_label, scales = "free_y") +
-  geom_text(data = test_results_raw,
-            aes(x = 1.5, y = Inf, label = label),
-            inherit.aes = FALSE, vjust = 1.2, size = 2.8, fontface = "bold") +
-  scale_fill_manual(values = c("All data" = "grey70", ">=75% coverage" = "#4ECDC4")) +
-  labs(x = NULL, y = "Raw variance",
-       title = "Variance components: All data vs >=75% trait coverage (raw values)",
-       subtitle = "Red diamonds = mean, Blue circles = median") +
-  theme_bw() +
-  theme(text = element_text(size = 11),
-        legend.position = "none",
-        axis.text.x = element_text(angle = 45, hjust = 1))
-
-# Violin plots for proportional variance with mean/median points and test annotations
-p_violin_prop = ggplot(plot_data_long, aes(x = coverage_group, y = prop_value, fill = coverage_group)) +
-  geom_violin(alpha = 0.6, trim = FALSE) +
-  geom_point(data = summary_points, aes(x = coverage_group, y = mean_prop),
-             color = "red", size = 3, shape = 18, inherit.aes = FALSE) +
-  geom_point(data = summary_points, aes(x = coverage_group, y = median_prop),
-             color = "blue", size = 3, shape = 16, inherit.aes = FALSE) +
-  facet_wrap(~ component_label, scales = "free_y") +
-  geom_text(data = test_results_prop,
-            aes(x = 1.5, y = Inf, label = label),
-            inherit.aes = FALSE, vjust = 1.2, size = 2.8, fontface = "bold") +
-  scale_fill_manual(values = c("All data" = "grey70", ">=75% coverage" = "#4ECDC4")) +
-  labs(x = NULL, y = "Proportional variance (dominance)",
-       title = "Variance components: All data vs >=75% trait coverage (proportional)",
-       subtitle = "Red diamonds = mean, Blue circles = median") +
-  theme_bw() +
-  theme(text = element_text(size = 11),
-        legend.position = "none",
-        axis.text.x = element_text(angle = 45, hjust = 1))
-
-# Combine bias plots
-p_bias_combined = p_violin_raw / p_violin_prop
-
-pdf(here("Calanda_JSDM", "plot", "trait_coverage_bias.pdf"), width = 12, height = 8)
-print(p_bias_combined)
-dev.off()
-
-cat("- plot/trait_coverage_bias.pdf: Community-level bias assessment visualization\n")
-
-# ==============================================================================
-# SPECIES-LEVEL BIAS ASSESSMENT
-# ==============================================================================
-cat("\n=== Species-level bias assessment ===\n")
-
-# Get species variance components
-species_variance = res$internals$Species %>%
-  as.data.frame() %>%
-  rownames_to_column("species") %>%
-  mutate(
-    total = env + codist + spa,
-    env_prop = env / total,
-    codist_prop = codist / total,
-    spa_prop = spa / total
-  )
-
-# Identify species with and without trait data
-species_with_data = species_with_traits
-species_without_data = setdiff(species_variance$species, species_with_traits)
-
-cat(sprintf("\nSpecies with trait data: %d\n", length(species_with_data)))
-cat(sprintf("Species without trait data: %d\n", length(species_without_data)))
-
-# Create comparison dataset for species
-all_species = species_variance %>%
-  mutate(trait_group = "All species")
-
-species_with_traits_df = species_variance %>%
-  filter(species %in% species_with_data) %>%
-  mutate(trait_group = "Species with traits")
-
-species_comparison = bind_rows(all_species, species_with_traits_df)
-
-# Statistical tests for species
-cat("\n=== Statistical tests (All species vs Species with traits) ===\n")
-
-# T-tests
-test_sp_env = t.test(all_species$env, species_with_traits_df$env)
-test_sp_codist = t.test(all_species$codist, species_with_traits_df$codist)
-test_sp_spa = t.test(all_species$spa, species_with_traits_df$spa)
-test_sp_env_prop = t.test(all_species$env_prop, species_with_traits_df$env_prop)
-test_sp_codist_prop = t.test(all_species$codist_prop, species_with_traits_df$codist_prop)
-test_sp_spa_prop = t.test(all_species$spa_prop, species_with_traits_df$spa_prop)
-
-# Wilcoxon tests
-wilcox_sp_env = wilcox.test(all_species$env, species_with_traits_df$env)
-wilcox_sp_codist = wilcox.test(all_species$codist, species_with_traits_df$codist)
-wilcox_sp_spa = wilcox.test(all_species$spa, species_with_traits_df$spa)
-wilcox_sp_env_prop = wilcox.test(all_species$env_prop, species_with_traits_df$env_prop)
-wilcox_sp_codist_prop = wilcox.test(all_species$codist_prop, species_with_traits_df$codist_prop)
-wilcox_sp_spa_prop = wilcox.test(all_species$spa_prop, species_with_traits_df$spa_prop)
-
-# Cramer-von Mises tests
-cvm_sp_env = cvm.test(species_with_traits_df$env, all_species$env)
-cvm_sp_codist = cvm.test(species_with_traits_df$codist, all_species$codist)
-cvm_sp_spa = cvm.test(species_with_traits_df$spa, all_species$spa)
-cvm_sp_env_prop = cvm.test(species_with_traits_df$env_prop, all_species$env_prop)
-cvm_sp_codist_prop = cvm.test(species_with_traits_df$codist_prop, all_species$codist_prop)
-cvm_sp_spa_prop = cvm.test(species_with_traits_df$spa_prop, all_species$spa_prop)
-
-cat("\n--- Raw variance (t-tests for means) ---\n")
-cat(sprintf("Environment: t=%.3f, p=%.4f %s\n", test_sp_env$statistic, test_sp_env$p.value,
-            ifelse(test_sp_env$p.value < 0.05, "***", "")))
-cat(sprintf("Co-distribution: t=%.3f, p=%.4f %s\n", test_sp_codist$statistic, test_sp_codist$p.value,
-            ifelse(test_sp_codist$p.value < 0.05, "***", "")))
-cat(sprintf("Spatial: t=%.3f, p=%.4f %s\n", test_sp_spa$statistic, test_sp_spa$p.value,
-            ifelse(test_sp_spa$p.value < 0.05, "***", "")))
-
-cat("\n--- Raw variance (Wilcoxon tests for medians) ---\n")
-cat(sprintf("Environment: W=%.1f, p=%.4f %s\n", wilcox_sp_env$statistic, wilcox_sp_env$p.value,
-            ifelse(wilcox_sp_env$p.value < 0.05, "***", "")))
-cat(sprintf("Co-distribution: W=%.1f, p=%.4f %s\n", wilcox_sp_codist$statistic, wilcox_sp_codist$p.value,
-            ifelse(wilcox_sp_codist$p.value < 0.05, "***", "")))
-cat(sprintf("Spatial: W=%.1f, p=%.4f %s\n", wilcox_sp_spa$statistic, wilcox_sp_spa$p.value,
-            ifelse(wilcox_sp_spa$p.value < 0.05, "***", "")))
-
-cat("\n--- Proportional variance (t-tests for means) ---\n")
-cat(sprintf("Environment prop: t=%.3f, p=%.4f %s\n", test_sp_env_prop$statistic, test_sp_env_prop$p.value,
-            ifelse(test_sp_env_prop$p.value < 0.05, "***", "")))
-cat(sprintf("Co-distribution prop: t=%.3f, p=%.4f %s\n", test_sp_codist_prop$statistic, test_sp_codist_prop$p.value,
-            ifelse(test_sp_codist_prop$p.value < 0.05, "***", "")))
-cat(sprintf("Spatial prop: t=%.3f, p=%.4f %s\n", test_sp_spa_prop$statistic, test_sp_spa_prop$p.value,
-            ifelse(test_sp_spa_prop$p.value < 0.05, "***", "")))
-
-cat("\n--- Proportional variance (Wilcoxon tests for medians) ---\n")
-cat(sprintf("Environment prop: W=%.1f, p=%.4f %s\n", wilcox_sp_env_prop$statistic, wilcox_sp_env_prop$p.value,
-            ifelse(wilcox_sp_env_prop$p.value < 0.05, "***", "")))
-cat(sprintf("Co-distribution prop: W=%.1f, p=%.4f %s\n", wilcox_sp_codist_prop$statistic, wilcox_sp_codist_prop$p.value,
-            ifelse(wilcox_sp_codist_prop$p.value < 0.05, "***", "")))
-cat(sprintf("Spatial prop: W=%.1f, p=%.4f %s\n", wilcox_sp_spa_prop$statistic, wilcox_sp_spa_prop$p.value,
-            ifelse(wilcox_sp_spa_prop$p.value < 0.05, "***", "")))
-
-cat("\n--- Raw variance (Cramer-von Mises tests for distributions) ---\n")
-cat(sprintf("Environment: CvM=%.4f, p=%.4f %s\n", cvm_sp_env$statistic, cvm_sp_env$p.value,
-            ifelse(cvm_sp_env$p.value < 0.05, "***", "")))
-cat(sprintf("Co-distribution: CvM=%.4f, p=%.4f %s\n", cvm_sp_codist$statistic, cvm_sp_codist$p.value,
-            ifelse(cvm_sp_codist$p.value < 0.05, "***", "")))
-cat(sprintf("Spatial: CvM=%.4f, p=%.4f %s\n", cvm_sp_spa$statistic, cvm_sp_spa$p.value,
-            ifelse(cvm_sp_spa$p.value < 0.05, "***", "")))
-
-cat("\n--- Proportional variance (Cramer-von Mises tests for distributions) ---\n")
-cat(sprintf("Environment prop: CvM=%.4f, p=%.4f %s\n", cvm_sp_env_prop$statistic, cvm_sp_env_prop$p.value,
-            ifelse(cvm_sp_env_prop$p.value < 0.05, "***", "")))
-cat(sprintf("Co-distribution prop: CvM=%.4f, p=%.4f %s\n", cvm_sp_codist_prop$statistic, cvm_sp_codist_prop$p.value,
-            ifelse(cvm_sp_codist_prop$p.value < 0.05, "***", "")))
-cat(sprintf("Spatial prop: CvM=%.4f, p=%.4f %s\n", cvm_sp_spa_prop$statistic, cvm_sp_spa_prop$p.value,
-            ifelse(cvm_sp_spa_prop$p.value < 0.05, "***", "")))
-
-# Calculate mean and median differences for species (with NA removal)
-mean_diff_sp_env = mean(all_species$env, na.rm = TRUE) - mean(species_with_traits_df$env, na.rm = TRUE)
-mean_diff_sp_codist = mean(all_species$codist, na.rm = TRUE) - mean(species_with_traits_df$codist, na.rm = TRUE)
-mean_diff_sp_spa = mean(all_species$spa, na.rm = TRUE) - mean(species_with_traits_df$spa, na.rm = TRUE)
-mean_diff_sp_env_prop = mean(all_species$env_prop, na.rm = TRUE) - mean(species_with_traits_df$env_prop, na.rm = TRUE)
-mean_diff_sp_codist_prop = mean(all_species$codist_prop, na.rm = TRUE) - mean(species_with_traits_df$codist_prop, na.rm = TRUE)
-mean_diff_sp_spa_prop = mean(all_species$spa_prop, na.rm = TRUE) - mean(species_with_traits_df$spa_prop, na.rm = TRUE)
-
-median_diff_sp_env = median(all_species$env, na.rm = TRUE) - median(species_with_traits_df$env, na.rm = TRUE)
-median_diff_sp_codist = median(all_species$codist, na.rm = TRUE) - median(species_with_traits_df$codist, na.rm = TRUE)
-median_diff_sp_spa = median(all_species$spa, na.rm = TRUE) - median(species_with_traits_df$spa, na.rm = TRUE)
-median_diff_sp_env_prop = median(all_species$env_prop, na.rm = TRUE) - median(species_with_traits_df$env_prop, na.rm = TRUE)
-median_diff_sp_codist_prop = median(all_species$codist_prop, na.rm = TRUE) - median(species_with_traits_df$codist_prop, na.rm = TRUE)
-median_diff_sp_spa_prop = median(all_species$spa_prop, na.rm = TRUE) - median(species_with_traits_df$spa_prop, na.rm = TRUE)
-
-# Store species t-test, Wilcoxon, and Cramer-von Mises results
-test_results_species = data.frame(
-  component = c("Environment", "Species associations", "Spatial",
-                "Environment", "Species associations", "Spatial"),
-  variance_type = c(rep("Raw variance", 3), rep("Proportional variance", 3)),
-  p_value_t = c(test_sp_env$p.value, test_sp_codist$p.value, test_sp_spa$p.value,
-                test_sp_env_prop$p.value, test_sp_codist_prop$p.value, test_sp_spa_prop$p.value),
-  p_value_w = c(wilcox_sp_env$p.value, wilcox_sp_codist$p.value, wilcox_sp_spa$p.value,
-                wilcox_sp_env_prop$p.value, wilcox_sp_codist_prop$p.value, wilcox_sp_spa_prop$p.value),
-  p_value_cvm = c(cvm_sp_env$p.value, cvm_sp_codist$p.value, cvm_sp_spa$p.value,
-                  cvm_sp_env_prop$p.value, cvm_sp_codist_prop$p.value, cvm_sp_spa_prop$p.value),
-  mean_diff = c(mean_diff_sp_env, mean_diff_sp_codist, mean_diff_sp_spa,
-                mean_diff_sp_env_prop, mean_diff_sp_codist_prop, mean_diff_sp_spa_prop),
-  median_diff = c(median_diff_sp_env, median_diff_sp_codist, median_diff_sp_spa,
-                  median_diff_sp_env_prop, median_diff_sp_codist_prop, median_diff_sp_spa_prop)
-) %>%
-  mutate(
-    sig_label_t = case_when(
-      p_value_t < 0.001 ~ "***",
-      p_value_t < 0.01 ~ "**",
-      p_value_t < 0.05 ~ "*",
-      TRUE ~ "ns"
-    ),
-    sig_label_w = case_when(
-      p_value_w < 0.001 ~ "***",
-      p_value_w < 0.01 ~ "**",
-      p_value_w < 0.05 ~ "*",
-      TRUE ~ "ns"
-    ),
-    sig_label_cvm = case_when(
-      p_value_cvm < 0.001 ~ "***",
-      p_value_cvm < 0.01 ~ "**",
-      p_value_cvm < 0.05 ~ "*",
-      TRUE ~ "ns"
-    ),
-    label = sprintf("Mean D=%.3f (t: p=%.4f %s)\nMedian D=%.3f (W: p=%.4f %s)\nDistribution (CvM: p=%.4f %s)",
-                    mean_diff, p_value_t, sig_label_t,
-                    median_diff, p_value_w, sig_label_w,
-                    p_value_cvm, sig_label_cvm)
-  )
-
-# Summary statistics for species
-summary_stats_species = species_comparison %>%
-  group_by(trait_group) %>%
-  summarize(
-    n = n(),
-    env_mean = mean(env, na.rm = TRUE), env_median = median(env, na.rm = TRUE), env_sd = sd(env, na.rm = TRUE),
-    codist_mean = mean(codist, na.rm = TRUE), codist_median = median(codist, na.rm = TRUE), codist_sd = sd(codist, na.rm = TRUE),
-    spa_mean = mean(spa, na.rm = TRUE), spa_median = median(spa, na.rm = TRUE), spa_sd = sd(spa, na.rm = TRUE),
-    env_prop_mean = mean(env_prop, na.rm = TRUE), env_prop_median = median(env_prop, na.rm = TRUE), env_prop_sd = sd(env_prop, na.rm = TRUE),
-    codist_prop_mean = mean(codist_prop, na.rm = TRUE), codist_prop_median = median(codist_prop, na.rm = TRUE), codist_prop_sd = sd(codist_prop, na.rm = TRUE),
-    spa_prop_mean = mean(spa_prop, na.rm = TRUE), spa_prop_median = median(spa_prop, na.rm = TRUE), spa_prop_sd = sd(spa_prop, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-cat("\n=== Summary statistics by species group ===\n")
-print(summary_stats_species)
-
-# Save species data
-write_csv(species_variance %>%
-            mutate(has_traits = species %in% species_with_data),
-          here("Calanda_JSDM", "output", "species_variance_trait_status.csv"))
-write_csv(summary_stats_species, here("Calanda_JSDM", "output", "species_bias_summary.csv"))
-
-cat("\n- output/species_variance_trait_status.csv: Species variance with trait status\n")
-cat("- output/species_bias_summary.csv: Summary statistics by species group\n")
-
-# ==============================================================================
-# SPECIES-LEVEL VISUALIZATIONS
-# ==============================================================================
-cat("\n=== Creating species-level bias plots ===\n")
-
-# Prepare data for plotting
-plot_data_species_long = species_comparison %>%
-  select(species, trait_group, env, codist, spa, env_prop, codist_prop, spa_prop) %>%
-  pivot_longer(cols = c(env, codist, spa),
-               names_to = "component", values_to = "raw_value") %>%
-  pivot_longer(cols = c(env_prop, codist_prop, spa_prop),
-               names_to = "component_prop", values_to = "prop_value") %>%
-  filter(gsub("_prop", "", component_prop) == component) %>%
-  mutate(
-    component_label = factor(case_when(
-      component == "env" ~ "Environment",
-      component == "codist" ~ "Species associations",
-      component == "spa" ~ "Spatial"
-    ), levels = c("Environment", "Species associations", "Spatial"))
-  )
-
-# Add test results for annotations
-test_results_sp_raw = test_results_species %>%
-  filter(variance_type == "Raw variance") %>%
-  mutate(component_label = factor(component, levels = c("Environment", "Species associations", "Spatial")))
-
-test_results_sp_prop = test_results_species %>%
-  filter(variance_type == "Proportional variance") %>%
-  mutate(component_label = factor(component, levels = c("Environment", "Species associations", "Spatial")))
-
-# Calculate summary statistics for overlaying mean and median points
-summary_points_sp = plot_data_species_long %>%
-  group_by(trait_group, component_label) %>%
-  summarize(
-    mean_raw = mean(raw_value, na.rm = TRUE),
-    median_raw = median(raw_value, na.rm = TRUE),
-    mean_prop = mean(prop_value, na.rm = TRUE),
-    median_prop = median(prop_value, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-# Violin plots for raw variance with mean/median points and test annotations
-p_sp_violin_raw = ggplot(plot_data_species_long, aes(x = trait_group, y = raw_value, fill = trait_group)) +
-  geom_violin(alpha = 0.6, trim = FALSE) +
-  geom_point(data = summary_points_sp, aes(x = trait_group, y = mean_raw),
-             color = "red", size = 3, shape = 18, inherit.aes = FALSE) +
-  geom_point(data = summary_points_sp, aes(x = trait_group, y = median_raw),
-             color = "blue", size = 3, shape = 16, inherit.aes = FALSE) +
-  facet_wrap(~ component_label, scales = "free_y") +
-  geom_text(data = test_results_sp_raw,
-            aes(x = 1.5, y = Inf, label = label),
-            inherit.aes = FALSE, vjust = 1.2, size = 2.8, fontface = "bold") +
-  scale_fill_manual(values = c("All species" = "grey70", "Species with traits" = "#95E1D3")) +
-  labs(x = NULL, y = "Raw variance",
-       title = "Species variance components: All species vs Species with trait data (raw values)",
-       subtitle = "Red diamonds = mean, Blue circles = median") +
-  theme_bw() +
-  theme(text = element_text(size = 11),
-        legend.position = "none",
-        axis.text.x = element_text(angle = 45, hjust = 1))
-
-# Violin plots for proportional variance with mean/median points and test annotations
-p_sp_violin_prop = ggplot(plot_data_species_long, aes(x = trait_group, y = prop_value, fill = trait_group)) +
-  geom_violin(alpha = 0.6, trim = FALSE) +
-  geom_point(data = summary_points_sp, aes(x = trait_group, y = mean_prop),
-             color = "red", size = 3, shape = 18, inherit.aes = FALSE) +
-  geom_point(data = summary_points_sp, aes(x = trait_group, y = median_prop),
-             color = "blue", size = 3, shape = 16, inherit.aes = FALSE) +
-  facet_wrap(~ component_label, scales = "free_y") +
-  geom_text(data = test_results_sp_prop,
-            aes(x = 1.5, y = Inf, label = label),
-            inherit.aes = FALSE, vjust = 1.2, size = 2.8, fontface = "bold") +
-  scale_fill_manual(values = c("All species" = "grey70", "Species with traits" = "#95E1D3")) +
-  labs(x = NULL, y = "Proportional variance (dominance)",
-       title = "Species variance components: All species vs Species with trait data (proportional)",
-       subtitle = "Red diamonds = mean, Blue circles = median") +
-  theme_bw() +
-  theme(text = element_text(size = 11),
-        legend.position = "none",
-        axis.text.x = element_text(angle = 45, hjust = 1))
-
-# Combine species bias plots
-p_sp_bias_combined = p_sp_violin_raw / p_sp_violin_prop
-
-pdf(here("Calanda_JSDM", "plot", "species_trait_coverage_bias.pdf"), width = 12, height = 8)
-print(p_sp_bias_combined)
-dev.off()
-
-cat("- plot/species_trait_coverage_bias.pdf: Species-level bias assessment visualization\n")
-
-cat("\n=== Coverage assessment complete ===\n")
-
-} # end if starter_data exists
+cat("\nNote: Imputation and coverage assessment are in R/archive/imputation_and_coverage_assessment.R\n")
