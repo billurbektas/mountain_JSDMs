@@ -1203,15 +1203,20 @@ extract_mowing_events = function(raster_pattern = "grassland-use_intensity_.*\\.
 #' Calculate community-weighted mean traits
 #'
 #' Joins a community matrix (sites x species) with species trait data and
-#' calculates community-weighted means per site.
+#' calculates community-weighted means per site. Optionally log- or
+#' sqrt-transforms specified trait columns before computing CWMs.
 #'
 #' @param community_data Matrix or data frame of sites x species (presence/absence or abundance)
 #' @param traits_data Data frame of species traits
 #' @param species_col Column name for species in traits_data
 #' @param abundance_col If provided, use abundance weighting
 #' @param trait_cols Character vector of trait column names (auto-detected if NULL)
+#' @param log_traits Character vector of trait column names to log-transform before CWM calculation (default NULL)
+#' @param sqrt_traits Character vector of trait column names to sqrt-transform before CWM calculation (default NULL)
 #' @return Data frame with CWM traits per site
-calculate_community_traits = function(community_data, traits_data, species_col = "species", abundance_col = NULL, trait_cols = NULL) {
+calculate_community_traits = function(community_data, traits_data, species_col = "species",
+                                       abundance_col = NULL, trait_cols = NULL,
+                                       log_traits = NULL, sqrt_traits = NULL) {
   site_ids = rownames(community_data)
   community_data = as_tibble(community_data) %>%
     mutate(plot_id_releve = site_ids, .before = 1)
@@ -1225,6 +1230,18 @@ calculate_community_traits = function(community_data, traits_data, species_col =
 
   if (is.null(trait_cols)) {
     trait_cols = setdiff(colnames(traits_data), species_col)
+  }
+
+  # Apply log-transformation to specified trait columns
+  if (!is.null(log_traits)) {
+    traits_data = traits_data %>%
+      mutate(across(all_of(log_traits), ~ log(.x)))
+  }
+
+  # Apply sqrt-transformation to specified trait columns
+  if (!is.null(sqrt_traits)) {
+    traits_data = traits_data %>%
+      mutate(across(all_of(sqrt_traits), ~ sqrt(.x)))
   }
 
   species_cols = setdiff(colnames(community_data), "plot_id_releve")
@@ -1248,6 +1265,19 @@ calculate_community_traits = function(community_data, traits_data, species_col =
   community_traits = community_long %>%
     left_join(traits_data, by = c("species" = species_col))
 
+  # Trait coverage: proportion of total abundance with non-NA trait data
+  # Computed before transformations would matter (NA pattern is the same)
+  trait_coverage = community_traits %>%
+    group_by(plot_id_releve) %>%
+    summarise(
+      across(
+        all_of(trait_cols),
+        list(
+          coverage = ~ sum(abundance[!is.na(.x)]) / sum(abundance)
+        )
+      )
+    )
+
   community_weighted_means = community_traits %>%
     group_by(plot_id_releve) %>%
     summarise(
@@ -1258,7 +1288,8 @@ calculate_community_traits = function(community_data, traits_data, species_col =
           cwm = ~ weighted.mean(.x, w = abundance, na.rm = TRUE)
         )
       )
-    )
+    ) %>%
+    left_join(trait_coverage, by = "plot_id_releve")
 
   return(community_weighted_means)
 }
