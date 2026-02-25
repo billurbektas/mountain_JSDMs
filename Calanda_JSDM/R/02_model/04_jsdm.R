@@ -23,7 +23,8 @@ conflict_prefer("select", "dplyr")
 conflict_prefer("filter", "dplyr")
 
 # Load data ----
-data_calanda_jsdm = readRDS(here("Calanda_JSDM", "output", "data_calanda_jsdm.rds"))
+date.data = "2026-02-25"
+data_calanda_jsdm = readRDS(here("Calanda_JSDM", "output", paste0("data_calanda_jsdm_",Sys.Date(),".rds")))
 X = data_calanda_jsdm$X
 Y = data_calanda_jsdm$Y
 
@@ -38,9 +39,9 @@ lambda_bio = 0.001
 alpha_bio = 1.0
 
 learning_rate = 0.01
-sampling = 50000L
-device = "gpu"
-iterations = 750L
+sampling = 100L
+device = "cpu"
+iterations = 50L
 act = "selu"
 
 # Fit model ----
@@ -49,9 +50,9 @@ cat("\n=== Fitting sjSDM model ===\n")
 model = sjSDM(
   Y = Y,
   env = linear(X,
-    formula = ~summer_temp + fdd + et_annual + slope + rocks_cover +
-      trees_cover + shrubs_cover + soil_depth_mean + soil_depth_var +
-      tpi + flowdir + roughness + land_use,
+    formula = ~summer_temp + fdd + et.annual + slope + rocks_cover +
+      trees_cover + shrubs_cover + soil_depth_var +
+      tpi + flowdir + nutrient + disturbance,
     lambda = lambda_sp, alpha = alpha_sp),
   spatial = DNN(X %>% select(Latitude, Longitude),
     formula = ~0 + .,
@@ -69,10 +70,10 @@ model = sjSDM(
                          scheduler = 5L,
                          early_stopping_training = 25L,
                          lr_reduce_factor = 0.9),
-  se = TRUE
+  se = FALSE
 )
 
-saveRDS(model, here("Calanda_JSDM", "output", "model_sjsdm_calanda.rds"))
+saveRDS(model, here("Calanda_JSDM", "output", paste0("model_sjsdm_calanda_", Sys.Date(), ".rds")))
 
 # Variance partitioning ----
 cat("Computing R², ANOVA, and internal structure...\n")
@@ -81,8 +82,8 @@ R2 = Rsquared(model, verbose = TRUE)
 an = anova(model, verbose = TRUE, samples = sampling)
 res = internalStructure(an, fractions = "proportional")
 
-saveRDS(R2, here("Calanda_JSDM", "output", "R2_sjsdm_calanda.rds"))
-saveRDS(an, here("Calanda_JSDM", "output", "an_sjsdm_calanda.rds"))
-saveRDS(res, here("Calanda_JSDM", "output", "res_sjsdm_calanda.rds"))
+saveRDS(R2, here("Calanda_JSDM", "output", paste0("R2_sjsdm_calanda_", Sys.Date(), ".rds")))
+saveRDS(an, here("Calanda_JSDM", "output", paste0("an_sjsdm_calanda_", Sys.Date(), ".rds")))
+saveRDS(res, here("Calanda_JSDM", "output", paste0("res_sjsdm_calanda_", Sys.Date(), ".rds")))
 
 cat("\n=== Model fitting complete ===\n")
