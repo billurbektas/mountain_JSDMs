@@ -123,15 +123,11 @@ vary_labels = c(
 )
 
 # ==============================================================================
-# SANITY CHECK: Exp2 lambda_vary=0.01 vs Exp1 LIN_XY_XY l=0.01
+# INJECT ANCHOR RUNS FROM EXP 1 (lambda = 0.01, all compartments equal)
 # ==============================================================================
-cat("\n=== Sanity check: Exp2 (lambda_vary=0.01) vs Exp1 (LIN_XY_XY, l=0.01) ===\n")
-
-sanity_rows = list()
+cat("\n=== Injecting Exp1 anchor runs (lambda = 0.01) ===\n")
 
 for (alpha_val in c(0, 0.5, 1)) {
-
-  # --- Exp1 reference ---
   exp1_file = here("Calanda_JSDM", "output", "results", "runs",
                    paste0("LIN_XY_XY_a", alpha_val, "_l0.01.rds"))
   if (!file.exists(exp1_file)) {
@@ -139,151 +135,53 @@ for (alpha_val in c(0, 0.5, 1)) {
     next
   }
   exp1 = readRDS(exp1_file)
-  exp1_r2      = exp1$partition$R2
-  exp1_species = exp1$partition$species
-  exp1_sites   = exp1$partition$sites
 
-  cat(sprintf("\n  alpha = %s\n", alpha_val))
-  cat("  ", strrep("-", 50), "\n")
+  # The anchor point is the same for all three "vary" facets
+  for (v in c("lambda_env", "lambda_sp", "lambda_bio")) {
+    rid = paste0("exp1_anchor_", v, "_a", alpha_val)
 
-  # --- Exp2: pick first vary run (all three are identical at anchor) ---
-  exp2_rid = df_species %>%
-    filter(lambda_vary == 0.01, alpha == alpha_val) %>%
-    pull(run_id) %>% unique() %>% .[1]
+    history_list[[rid]] = tibble(
+      run_id      = rid,
+      vary        = v,
+      lambda_vary = 0.01,
+      alpha       = alpha_val,
+      iteration   = seq_along(exp1$model$history),
+      loss        = as.numeric(exp1$model$history)
+    )
 
-  exp2 = readRDS(here("Calanda_JSDM", "output", "results", "decoupled",
-                      paste0(exp2_rid, ".rds")))
-  exp2_r2      = exp2$partition$R2
-  exp2_species = exp2$partition$species
-  exp2_sites   = exp2$partition$sites
+    anova_res = exp1$partition$anova$results
+    r2_mcf    = setNames(anova_res$`R2 McFadden`, anova_res$models)
 
-  r2_diff = exp2_r2 - exp1_r2
-  cat(sprintf("  Overall R2: Exp1=%.6f  Exp2=%.6f  diff=%.6f\n",
-              exp1_r2, exp2_r2, r2_diff))
+    metrics_list[[rid]] = tibble(
+      run_id      = rid,
+      vary        = v,
+      lambda_vary = 0.01,
+      alpha       = alpha_val,
+      metric_type = c("overall_R2", "env_R2", "spa_R2", "bio_R2",
+                       "env_bio_R2", "env_spa_R2", "bio_spa_R2", "shared_R2"),
+      value       = c(r2_mcf["Full"], r2_mcf["F_A"], r2_mcf["F_S"], r2_mcf["F_B"],
+                       r2_mcf["F_AB"], r2_mcf["F_AS"], r2_mcf["F_BS"], r2_mcf["F_ABS"])
+    )
 
-  for (col in c("env", "spa", "codist", "r2")) {
-    sp_cor = cor(exp1_species[, col], exp2_species[, col], use = "complete.obs")
-    si_cor = cor(exp1_sites[, col],   exp2_sites[, col],   use = "complete.obs")
+    species_list[[rid]] = as_tibble(exp1$partition$species) %>%
+      mutate(run_id = rid, vary = v, lambda_vary = 0.01, alpha = alpha_val,
+             species_idx = row_number())
 
-    sanity_rows = c(sanity_rows, list(tibble(
-      alpha     = alpha_val,
-      component = col,
-      level     = c("Species", "Sites"),
-      correlation = c(sp_cor, si_cor)
-    )))
+    sites_list[[rid]] = as_tibble(exp1$partition$sites) %>%
+      mutate(run_id = rid, vary = v, lambda_vary = 0.01, alpha = alpha_val,
+             site_idx = row_number())
   }
-
-  # Overall R2 as a separate entry
-  sanity_rows = c(sanity_rows, list(tibble(
-    alpha       = alpha_val,
-    component   = "overall_R2",
-    level       = "Model",
-    correlation = NA_real_,
-    r2_diff     = r2_diff
-  )))
-
-  sp_cors = sapply(c("env", "spa", "codist", "r2"), function(col)
-    cor(exp1_species[, col], exp2_species[, col], use = "complete.obs"))
-  si_cors = sapply(c("env", "spa", "codist", "r2"), function(col)
-    cor(exp1_sites[, col], exp2_sites[, col], use = "complete.obs"))
-
-  cat(sprintf("  Species cor:  env=%.4f  spa=%.4f  codist=%.4f  r2=%.4f\n",
-              sp_cors["env"], sp_cors["spa"], sp_cors["codist"], sp_cors["r2"]))
-  cat(sprintf("  Sites cor:    env=%.4f  spa=%.4f  codist=%.4f  r2=%.4f\n",
-              si_cors["env"], si_cors["spa"], si_cors["codist"], si_cors["r2"]))
+  cat("  Injected alpha =", alpha_val, "\n")
 }
 
-df_sanity = bind_rows(sanity_rows)
+# Rebuild data frames with anchor runs included
+df_history = bind_rows(history_list)
+df_metrics = bind_rows(metrics_list)
+df_species = bind_rows(species_list)
+df_sites   = bind_rows(sites_list)
 
-cat("\n  (Correlations should be ~1.0 and R2 diffs ~0 if runs are reproducible)\n")
-
-# --- Sanity check figure ---
-cat("\n=== Creating sanity check figure ===\n")
-
-comp_labels = c(env = "Environment", spa = "Spatial", codist = "Biotic", r2 = "R\u00B2")
-comp_colors_sanity = c(env = color_env, spa = color_spa, codist = color_codist, r2 = color_overall)
-
-# Panel A: Overall R2 difference
-df_r2_diff = df_sanity %>%
-  filter(level == "Model") %>%
-  mutate(alpha_lab = paste0("alpha = ", alpha))
-
-p_r2 = ggplot(df_r2_diff, aes(x = factor(alpha), y = r2_diff)) +
-  geom_hline(yintercept = 0, linewidth = 0.3, color = "grey40") +
-  geom_col(fill = "grey50", width = 0.5) +
-  geom_text(aes(label = sprintf("%.4f", r2_diff)),
-            vjust = ifelse(df_r2_diff$r2_diff >= 0, -0.5, 1.5), size = 3.5) +
-  labs(
-    title = "A) Overall R\u00B2 difference (Exp2 - Exp1)",
-    x = expression(alpha), y = expression(Delta * R^2)
-  ) +
-  theme_bw(base_size = 11)
-
-# Panel B: Species-level correlations
-df_sp_cor = df_sanity %>%
-  filter(level == "Species") %>%
-  mutate(
-    component_lab = recode(component, !!!comp_labels),
-    component_lab = factor(component_lab, levels = comp_labels)
-  )
-
-p_sp = ggplot(df_sp_cor, aes(x = factor(alpha), y = correlation, fill = component)) +
-  geom_hline(yintercept = 0, linewidth = 0.3, color = "grey40") +
-  geom_hline(yintercept = 1, linewidth = 0.3, linetype = "dashed", color = "grey60") +
-  geom_col(position = position_dodge(width = 0.7), width = 0.6, alpha = 0.7) +
-  geom_text(aes(label = sprintf("%.2f", correlation)),
-            position = position_dodge(width = 0.7),
-            vjust = -0.3, size = 2.8) +
-  scale_fill_manual(values = comp_colors_sanity, labels = comp_labels) +
-  labs(
-    title = "B) Species-level correlation (Exp1 vs Exp2)",
-    x = expression(alpha), y = "Pearson r",
-    fill = "Component"
-  ) +
-  theme_bw(base_size = 11) +
-  theme(legend.position = "bottom")
-
-# Panel C: Site-level correlations
-df_si_cor = df_sanity %>%
-  filter(level == "Sites") %>%
-  mutate(
-    component_lab = recode(component, !!!comp_labels),
-    component_lab = factor(component_lab, levels = comp_labels)
-  )
-
-p_si = ggplot(df_si_cor, aes(x = factor(alpha), y = correlation, fill = component)) +
-  geom_hline(yintercept = 0, linewidth = 0.3, color = "grey40") +
-  geom_hline(yintercept = 1, linewidth = 0.3, linetype = "dashed", color = "grey60") +
-  geom_col(position = position_dodge(width = 0.7), width = 0.6, alpha = 0.7) +
-  geom_text(aes(label = sprintf("%.2f", correlation)),
-            position = position_dodge(width = 0.7),
-            vjust = -0.3, size = 2.8) +
-  scale_fill_manual(values = comp_colors_sanity, labels = comp_labels) +
-  scale_y_continuous(limits = c(0, 1.08)) +
-  labs(
-    title = "C) Site-level correlation (Exp1 vs Exp2)",
-    x = expression(alpha), y = "Pearson r",
-    fill = "Component"
-  ) +
-  theme_bw(base_size = 11) +
-  theme(legend.position = "bottom")
-
-# Combine with patchwork
-p_sanity = p_r2 / (p_sp | p_si) +
-  plot_annotation(
-    title = "Reproducibility check: Exp1 vs Exp2 at identical config (LIN_XY_XY, lambda = 0.01)",
-    subtitle = "Same hyperparameters, independent model fits",
-    theme = theme(
-      plot.title = element_text(face = "bold", size = 13),
-      plot.subtitle = element_text(size = 11)
-    )
-  )
-
-pdf(here("Calanda_JSDM", "plot", "exp2_sanity_check.pdf"),
-    width = 12, height = 10)
-print(p_sanity)
-dev.off()
-cat("  Saved exp2_sanity_check.pdf\n")
+cat(sprintf("  After injection: %d metric rows, %d species rows, %d site rows\n",
+            nrow(df_metrics), nrow(df_species), nrow(df_sites)))
 
 # ==============================================================================
 # STEP 2: CONVERGENCE CHECK
