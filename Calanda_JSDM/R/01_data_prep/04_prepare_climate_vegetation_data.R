@@ -34,6 +34,7 @@ library(factoextra)
 library(patchwork)
 library(gt)
 library(here)
+library(plotly)
 
 conflict_prefer("select", "dplyr")
 conflict_prefer("filter", "dplyr")
@@ -345,7 +346,7 @@ veg_pa = veg_comm %>%
 veg_rare = veg_pa %>%
   summarise(across(everything(), ~sum(., na.rm = TRUE))) %>%
   pivot_longer(cols = everything()) %>%
-  filter(value < nrow(veg_pa) * 0.01) %>%
+  filter(value < nrow(veg_pa) * 0.05) %>%
   pull(name)
 
 veg_pa = veg_comm %>%
@@ -360,7 +361,7 @@ veg_abund = veg_comm %>%
   filter(!species %in% veg_rare) %>%
   group_by(plot_id_releve) %>%
   mutate(tot_rel_cover = sum(rel_cover)) %>%
-  filter(tot_rel_cover >= 0.8) %>%
+  filter(tot_rel_cover >= 0.70) %>%
   select(-tot_rel_cover) %>%
   pivot_wider(names_from = species, values_from = rel_cover, values_fill = 0)
 
@@ -376,7 +377,7 @@ cat("Plots with missing climate info taken out:", ncol(veg_abund), "species and"
 
 Y = as.matrix(veg_pa[rownames(veg_abund), ])
 cat("Species occurrence counts:\n")
-print(as.data.frame(colSums(Y)))
+print(as.data.frame(colSums(Y))) # Overall the occurences decrease again because we take out some sites. 
 
 # ==============================================================================
 # VEG_TREE: TREE/SHRUB COVER + WOODY SPECIES ABUNDANCES
@@ -683,6 +684,24 @@ cwm_scores = community_traits %>%
 veg_clim = veg_clim %>%
   left_join(cwm_scores, by = "plot_id_releve") %>%
   na.omit()
+
+sp_alt = veg_comm %>%
+  filter(rel_cover > 0) %>%
+  inner_join(veg_clim %>% select(plot_id_releve, altitude), by = "plot_id_releve") %>%
+  filter(!species %in% veg_rare) %>%
+  group_by(species) %>%
+  mutate(n_sites = n_distinct(plot_id_releve)) %>%
+  ungroup() %>%
+  mutate(label = paste0(species, " (n=", n_sites, ")"))
+
+p = ggplot(sp_alt, aes(x = altitude, color = label, group = label)) +
+  geom_density(alpha = 0.5, linewidth = 0.4) +
+  theme_minimal() +
+  labs(x = "Altitude (m)", y = "Density", title = "Species altitudinal distributions",
+       color = "Species")
+
+ggplotly(p, tooltip = c("group")) %>%
+  layout(legend = list(font = list(size = 8)))
 
 # ==============================================================================
 # FINAL ENVIRONMENTAL MATRIX
