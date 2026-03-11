@@ -1,23 +1,23 @@
 # ==============================================================================
-# Script: 12_post_exp4_cv.R
-# Purpose: Post-analysis of sjSDM Experiment 4 - k-fold cross-validation
+# Script: 12_post_exp6_cv.R
+# Purpose: Post-analysis of sjSDM Experiment 6 - k-fold cross-validation
 #          1) Predictive performance: species AUC violin + site log-loss violin
 #          2) VP stability across folds: full model R2, species-level and
 #             site-level E/S/C/R2 means with 95% CIs across 10 folds
 #
 # Inputs:
-#   - output/results/exp4_species_cv_<param_tag>.csv
-#   - output/results/exp4_sites_cv_<param_tag>.csv
+#   - output/results/exp6_species_cv_<param_tag>.csv
+#   - output/results/exp6_sites_cv_<param_tag>.csv
 #   - output/results/cv/fold_*_<param_tag>.rds (predictions + partition)
 #   - data_calanda_jsdm_*.rds (for Y matrix)
 #   - param_tag format: a<alpha>_l<lambda>_le<lambda_env>
 #
 # Outputs:
-#   - plot/exp4_prediction_violins_<param_tag>.pdf
-#   - plot/exp4_vp_model_stability_<param_tag>.pdf
-#   - plot/exp4_vp_species_stability_<param_tag>.pdf
-#   - plot/exp4_vp_sites_stability_<param_tag>.pdf
-#   - output/results/exp4_cv_summary_<param_tag>.csv
+#   - plot/exp6_prediction_violins_<param_tag>.pdf
+#   - plot/exp6_vp_model_stability_<param_tag>.pdf
+#   - plot/exp6_vp_species_stability_<param_tag>.pdf
+#   - plot/exp6_vp_sites_stability_<param_tag>.pdf
+#   - output/results/exp6_cv_summary_<param_tag>.csv
 #
 # Requires: R/00_setup/functions_calanda.R
 # ==============================================================================
@@ -52,12 +52,12 @@ dir.create(here("Calanda_JSDM", "plot"), showWarnings = FALSE, recursive = TRUE)
 # ==============================================================================
 # STEP 1: LOAD DATA
 # ==============================================================================
-cat("\n=== Step 1: Loading exp4 CV results ===\n")
+cat("\n=== Step 1: Loading exp6 CV results ===\n")
 
 # Detect param_tag from species CV file
 species_cv_files = list.files(
   here("Calanda_JSDM", "output", "results"),
-  pattern = "^exp4_species_cv_.*\\.csv$", full.names = TRUE
+  pattern = "^exp6_species_cv_.*\\.csv$", full.names = TRUE
 )
 
 tag_match = regmatches(basename(species_cv_files[1]),
@@ -70,10 +70,10 @@ cat(sprintf("  Detected param_tag: %s\n", param_tag))
 
 # Load species and site CSVs
 species_cv = read_csv(here("Calanda_JSDM", "output", "results",
-                           paste0("exp4_species_cv_", param_tag, ".csv")),
+                           paste0("exp6_species_cv_", param_tag, ".csv")),
                       show_col_types = FALSE)
 site_cv = read_csv(here("Calanda_JSDM", "output", "results",
-                        paste0("exp4_sites_cv_", param_tag, ".csv")),
+                        paste0("exp6_sites_cv_", param_tag, ".csv")),
                    show_col_types = FALSE)
 
 cat(sprintf("  Species: %d (test AUC available: %d)\n",
@@ -176,7 +176,7 @@ p_ll = ggplot(df_ll, aes(x = metric, y = value)) +
 
 p_violins = (p_auc | p_ll) +
   plot_annotation(
-    title = "Experiment 4: Predictive performance (out-of-fold)",
+    title = "Experiment 6: Predictive performance (out-of-fold)",
     subtitle = hp_subtitle,
     theme = theme(
       plot.title = element_text(face = "bold", size = 13),
@@ -184,11 +184,11 @@ p_violins = (p_auc | p_ll) +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp4_prediction_violins_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp6_prediction_violins_", param_tag, ".pdf")),
     width = 10, height = 7)
 print(p_violins)
 dev.off()
-cat(sprintf("  Saved exp4_prediction_violins_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp6_prediction_violins_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 3: VP STABILITY — FULL MODEL R2 ACROSS FOLDS
@@ -241,7 +241,7 @@ p_model_vp = ggplot(df_model_vp, aes(x = component, y = R2, color = component)) 
                 label = sprintf("%.4f\n[%.4f]", mean_R2, sd_R2)),
             vjust = -0.3, size = 3, show.legend = FALSE) +
   labs(
-    title = "Experiment 4: Model-level McFadden R2 across folds",
+    title = "Experiment 6: Model-level McFadden R2 across folds",
     subtitle = paste0(hp_subtitle, "\nDots = per-fold R2, bars = mean +/- 95% CI"),
     x = NULL, y = "McFadden R2"
   ) +
@@ -250,11 +250,11 @@ p_model_vp = ggplot(df_model_vp, aes(x = component, y = R2, color = component)) 
   coord_cartesian(clip = "off") +
   theme(plot.margin = margin(15, 5.5, 5.5, 5.5))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp4_vp_model_stability_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_model_stability_", param_tag, ".pdf")),
     width = 8, height = 7)
 print(p_model_vp)
 dev.off()
-cat(sprintf("  Saved exp4_vp_model_stability_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp6_vp_model_stability_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 4: VP STABILITY — SPECIES-LEVEL MEANS ACROSS FOLDS
@@ -350,7 +350,7 @@ p_sp_sd = ggplot(df_sp_species_sd, aes(x = sd_across_folds, fill = component)) +
 
 p_sp_stability = p_sp_means / p_sp_sd +
   plot_annotation(
-    title = "Experiment 4: Species-level VP stability across folds",
+    title = "Experiment 6: Species-level VP stability across folds",
     subtitle = hp_subtitle,
     theme = theme(
       plot.title = element_text(face = "bold", size = 13),
@@ -358,11 +358,11 @@ p_sp_stability = p_sp_means / p_sp_sd +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp4_vp_species_stability_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_species_stability_", param_tag, ".pdf")),
     width = 12, height = 12)
 print(p_sp_stability)
 dev.off()
-cat(sprintf("  Saved exp4_vp_species_stability_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp6_vp_species_stability_%s.pdf\n", param_tag))
 
 # --- C) Per-species ranked mean + CI across folds ---
 cat("  Building per-species VP error bar plot...\n")
@@ -411,18 +411,18 @@ p_sp_ranked = ggplot(df_sp_species_ci,
   scale_color_manual(values = unit_colors) +
   scale_alpha_continuous(range = c(0.3, 1), name = paste0("Folds with\npresence (/ ", k, ")")) +
   labs(
-    title = "Experiment 4: Per-species VP values (mean +/- 95% CI across folds)",
+    title = "Experiment 6: Per-species VP values (mean +/- 95% CI across folds)",
     subtitle = paste0("Species ranked by mean value | opacity = fraction of folds with presences\n", hp_subtitle),
     x = "Species (ranked)", y = "VP value"
   ) +
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp4_vp_species_ranked_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_species_ranked_", param_tag, ".pdf")),
     width = 14, height = 10)
 print(p_sp_ranked)
 dev.off()
-cat(sprintf("  Saved exp4_vp_species_ranked_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp6_vp_species_ranked_%s.pdf\n", param_tag))
 
 # --- D) Per-species ranked PROPORTIONS (mean + CI across folds) ---
 cat("  Building per-species VP proportion plots...\n")
@@ -483,7 +483,7 @@ p_sp_prop_ranked = ggplot(df_sp_prop_ci,
   facet_wrap(~ component, scales = "free_y") +
   scale_color_manual(values = prop_colors) +
   labs(
-    title = "Experiment 4: Per-species VP proportions (mean +/- 95% CI across folds)",
+    title = "Experiment 6: Per-species VP proportions (mean +/- 95% CI across folds)",
     subtitle = paste0("Proportion = component / (E+S+C) | Species ranked by mean proportion\n",
                       sprintf("Sanity check: cor(E+S+C, R2) = %.4f, mean|diff| = %.6f\n", sp_sum_r2_cor, sp_sum_r2_diff),
                       hp_subtitle),
@@ -492,11 +492,11 @@ p_sp_prop_ranked = ggplot(df_sp_prop_ci,
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp4_vp_species_proportions_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_species_proportions_", param_tag, ".pdf")),
     width = 14, height = 10)
 print(p_sp_prop_ranked)
 dev.off()
-cat(sprintf("  Saved exp4_vp_species_proportions_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp6_vp_species_proportions_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 5: VP STABILITY — SITE-LEVEL MEANS ACROSS FOLDS
@@ -592,7 +592,7 @@ p_si_sd = ggplot(df_si_site_sd, aes(x = sd_across_folds, fill = component)) +
 
 p_si_stability = p_si_means / p_si_sd +
   plot_annotation(
-    title = "Experiment 4: Site-level VP stability across folds",
+    title = "Experiment 6: Site-level VP stability across folds",
     subtitle = hp_subtitle,
     theme = theme(
       plot.title = element_text(face = "bold", size = 13),
@@ -600,11 +600,11 @@ p_si_stability = p_si_means / p_si_sd +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp4_vp_sites_stability_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_sites_stability_", param_tag, ".pdf")),
     width = 12, height = 12)
 print(p_si_stability)
 dev.off()
-cat(sprintf("  Saved exp4_vp_sites_stability_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp6_vp_sites_stability_%s.pdf\n", param_tag))
 
 # --- C) Per-site ranked mean + CI across folds ---
 cat("  Building per-site VP error bar plot...\n")
@@ -644,18 +644,18 @@ p_si_ranked = ggplot(df_si_site_ci,
   scale_color_manual(values = unit_colors) +
   scale_alpha_continuous(range = c(0.3, 1), name = paste0("Training folds\n(/ ", k, ")")) +
   labs(
-    title = "Experiment 4: Per-site VP values (mean +/- 95% CI across folds)",
+    title = "Experiment 6: Per-site VP values (mean +/- 95% CI across folds)",
     subtitle = paste0("Sites ranked by mean value | opacity = fraction of folds in training set\n", hp_subtitle),
     x = "Site (ranked)", y = "VP value"
   ) +
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp4_vp_sites_ranked_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_sites_ranked_", param_tag, ".pdf")),
     width = 14, height = 10)
 print(p_si_ranked)
 dev.off()
-cat(sprintf("  Saved exp4_vp_sites_ranked_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp6_vp_sites_ranked_%s.pdf\n", param_tag))
 
 # --- D) Per-site ranked PROPORTIONS (mean + CI across folds) ---
 cat("  Building per-site VP proportion plots...\n")
@@ -713,7 +713,7 @@ p_si_prop_ranked = ggplot(df_si_prop_ci,
   facet_wrap(~ component, scales = "free_y") +
   scale_color_manual(values = prop_colors) +
   labs(
-    title = "Experiment 4: Per-site VP proportions (mean +/- 95% CI across folds)",
+    title = "Experiment 6: Per-site VP proportions (mean +/- 95% CI across folds)",
     subtitle = paste0("Proportion = component / (E+S+C) | Sites ranked by mean proportion\n",
                       sprintf("Sanity check: cor(E+S+C, R2) = %.4f, mean|diff| = %.6f\n", si_sum_r2_cor, si_sum_r2_diff),
                       hp_subtitle),
@@ -722,11 +722,11 @@ p_si_prop_ranked = ggplot(df_si_prop_ci,
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp4_vp_sites_proportions_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_sites_proportions_", param_tag, ".pdf")),
     width = 14, height = 10)
 print(p_si_prop_ranked)
 dev.off()
-cat(sprintf("  Saved exp4_vp_sites_proportions_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp6_vp_sites_proportions_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 6: SUMMARY TABLE
@@ -764,7 +764,7 @@ df_summary = bind_cols(
                 names_glue = "sites_{component}_{.value}")
 )
 
-summary_file = paste0("exp4_cv_summary_", param_tag, ".csv")
+summary_file = paste0("exp6_cv_summary_", param_tag, ".csv")
 write_csv(df_summary,
           here("Calanda_JSDM", "output", "results", summary_file))
 cat(sprintf("  Saved %s\n", summary_file))
@@ -791,4 +791,4 @@ for (comp in names(unit_colors)) {
   cat(sprintf("    %s: %.4f +/- %.4f\n", comp, row$grand_mean, row$sd_val))
 }
 
-cat("\n=== Post Experiment 4 analysis complete ===\n")
+cat("\n=== Post Experiment 6 analysis complete ===\n")

@@ -1,20 +1,20 @@
 # ==============================================================================
-# Script: 14_post_exp6_species_stability.R
+# Script: 14_post_exp3_species_stability.R
 # Purpose: Identify which species drive the instability in anova variance
 #          partitioning. Same fitted model (sampling = 5000), 4 anova runs
 #          (10k, 20k, 30k, 50k samples). Per-species variation across runs
 #          is pure MC noise. Relate instability to species prevalence.
 #
 # Inputs:
-#   - output/results/anova_saturation/exp6_model_fit5000.rds (for Y matrix)
-#   - output/results/anova_saturation/exp6_anova_*.rds (4 VP runs)
+#   - output/results/anova_saturation/exp3_model_fit5000.rds (for Y matrix)
+#   - output/results/anova_saturation/exp3_anova_*.rds (4 VP runs)
 #
 # Outputs:
-#   - plot/exp6_species_sd_vs_prevalence.pdf
-#   - plot/exp6_species_range_vs_prevalence.pdf
-#   - plot/exp6_species_pairwise_scatter.pdf
-#   - plot/exp6_stable_vs_unstable_violins.pdf
-#   - output/results/exp6_species_stability.csv
+#   - plot/exp3_species_sd_vs_prevalence.pdf
+#   - plot/exp3_species_range_vs_prevalence.pdf
+#   - plot/exp3_species_pairwise_scatter.pdf
+#   - plot/exp3_stable_vs_unstable_violins.pdf
+#   - output/results/exp3_species_stability.csv
 #
 # Requires: R/00_setup/functions_calanda.R
 # ==============================================================================
@@ -52,7 +52,7 @@ cat("\n=== Step 1: Loading data ===\n")
 
 # Get Y matrix for prevalence
 model = readRDS(here("Calanda_JSDM", "output", "results", "anova_saturation",
-                     "exp6_model_fit5000.rds"))
+                     "exp3_model_fit5000.rds"))
 Y = model$data$Y
 n_presences = colSums(Y)
 n_sites = nrow(Y)
@@ -61,7 +61,7 @@ prevalence = n_presences / n_sites
 # Load all anova runs
 vp_files = list.files(
   here("Calanda_JSDM", "output", "results", "anova_saturation"),
-  pattern = "^exp6_anova_.*\\.rds$", full.names = TRUE
+  pattern = "^exp3_anova_.*\\.rds$", full.names = TRUE
 )
 
 species_arrays = list()  # list of 352 x 4 matrices
@@ -154,11 +154,11 @@ p_sd_prev = ggplot(df_stability,
   theme(legend.position = "none",
         strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", "exp6_species_sd_vs_prevalence.pdf"),
+pdf(here("Calanda_JSDM", "plot", "exp3_species_sd_vs_prevalence.pdf"),
     width = 12, height = 8)
 print(p_sd_prev)
 dev.off()
-cat("  Saved exp6_species_sd_vs_prevalence.pdf\n")
+cat("  Saved exp3_species_sd_vs_prevalence.pdf\n")
 
 # ==============================================================================
 # STEP 4: RANGE vs PREVALENCE SCATTER
@@ -182,11 +182,11 @@ p_range_prev = ggplot(df_stability,
   theme(legend.position = "none",
         strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", "exp6_species_range_vs_prevalence.pdf"),
+pdf(here("Calanda_JSDM", "plot", "exp3_species_range_vs_prevalence.pdf"),
     width = 12, height = 8)
 print(p_range_prev)
 dev.off()
-cat("  Saved exp6_species_range_vs_prevalence.pdf\n")
+cat("  Saved exp3_species_range_vs_prevalence.pdf\n")
 
 # ==============================================================================
 # STEP 5: PAIRWISE SCATTER (10k vs 50k) PER COMPONENT
@@ -234,7 +234,7 @@ p_r2     = make_scatter(df_pairwise, "r2_lo", "r2_hi", "Overall R\u00B2", color_
 
 p_scatter = (p_r2 | p_env) / (p_spa | p_codist) +
   plot_annotation(
-    title = sprintf("Experiment 6: Species-level partition (%s vs %s ANOVA samples)",
+    title = sprintf("Experiment 3: Species-level partition (%s vs %s ANOVA samples)",
                     format(as.integer(min_ns), big.mark = ","),
                     format(as.integer(max_ns), big.mark = ",")),
     subtitle = "Color = number of presences (darker = rarer). Same fitted model.",
@@ -244,11 +244,11 @@ p_scatter = (p_r2 | p_env) / (p_spa | p_codist) +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", "exp6_species_pairwise_scatter.pdf"),
+pdf(here("Calanda_JSDM", "plot", "exp3_species_pairwise_scatter.pdf"),
     width = 12, height = 10)
 print(p_scatter)
 dev.off()
-cat("  Saved exp6_species_pairwise_scatter.pdf\n")
+cat("  Saved exp3_species_pairwise_scatter.pdf\n")
 
 # ==============================================================================
 # STEP 6: STABLE vs UNSTABLE SPECIES (by prevalence bins)
@@ -309,15 +309,15 @@ p_violin_range = ggplot(df_stability,
 
 p_combined = p_violin_sd / p_violin_range +
   plot_annotation(
-    title = "Experiment 6: Species stability by prevalence",
+    title = "Experiment 3: Species stability by prevalence",
     theme = theme(plot.title = element_text(face = "bold", size = 13))
   )
 
-pdf(here("Calanda_JSDM", "plot", "exp6_stable_vs_unstable_violins.pdf"),
+pdf(here("Calanda_JSDM", "plot", "exp3_stable_vs_unstable_violins.pdf"),
     width = 12, height = 12)
 print(p_combined)
 dev.off()
-cat("  Saved exp6_stable_vs_unstable_violins.pdf\n")
+cat("  Saved exp3_stable_vs_unstable_violins.pdf\n")
 
 # ==============================================================================
 # STEP 7: CORRELATION BY PREVALENCE BIN
@@ -382,11 +382,11 @@ p_cor_bin = ggplot(df_cor_by_bin,
   theme_bw(base_size = 11) +
   theme(legend.position = "bottom")
 
-pdf(here("Calanda_JSDM", "plot", "exp6_correlation_by_prevalence.pdf"),
+pdf(here("Calanda_JSDM", "plot", "exp3_correlation_by_prevalence.pdf"),
     width = 10, height = 6)
 print(p_cor_bin)
 dev.off()
-cat("  Saved exp6_correlation_by_prevalence.pdf\n")
+cat("  Saved exp3_correlation_by_prevalence.pdf\n")
 
 # ==============================================================================
 # STEP 8: SAVE SUMMARY
@@ -394,7 +394,7 @@ cat("  Saved exp6_correlation_by_prevalence.pdf\n")
 cat("\n=== Step 8: Saving summary ===\n")
 
 write_csv(df_stability,
-          here("Calanda_JSDM", "output", "results", "exp6_species_stability.csv"))
-cat("  Saved exp6_species_stability.csv\n")
+          here("Calanda_JSDM", "output", "results", "exp3_species_stability.csv"))
+cat("  Saved exp3_species_stability.csv\n")
 
-cat("\n=== Post Experiment 6 species stability analysis complete ===\n")
+cat("\n=== Post Experiment 3 species stability analysis complete ===\n")

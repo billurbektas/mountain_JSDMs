@@ -1,6 +1,6 @@
 # ==============================================================================
-# Script: 11_post_exp3_dropone.R
-# Purpose: Post-analysis of sjSDM Experiment 3 drop-one environmental variable
+# Script: 11_post_exp5_dropone.R
+# Purpose: Post-analysis of sjSDM Experiment 5 drop-one environmental variable
 #          Compare each drop-one model to the BASE (full) model:
 #            - Model-level anova R2 differences (all 8 Venn fractions)
 #            - Species-level: mean of per-species differences + correlations
@@ -12,11 +12,11 @@
 #   - param_tag format: a<alpha>_l<lambda>_le<lambda_env>
 #
 # Outputs:
-#   - plot/exp3_anova_diff_<param_tag>.pdf
-#   - plot/exp3_species_diff_<param_tag>.pdf
-#   - plot/exp3_sites_diff_<param_tag>.pdf
-#   - plot/exp3_correlations_<param_tag>.pdf
-#   - output/results/exp3_dropone_summary_<param_tag>.csv
+#   - plot/exp5_anova_diff_<param_tag>.pdf
+#   - plot/exp5_species_diff_<param_tag>.pdf
+#   - plot/exp5_sites_diff_<param_tag>.pdf
+#   - plot/exp5_correlations_<param_tag>.pdf
+#   - output/results/exp5_dropone_summary_<param_tag>.csv
 #
 # Requires: R/00_setup/functions_calanda.R
 # ==============================================================================
@@ -218,7 +218,7 @@ df_full_summary = df_summary %>%
   left_join(df_corr_wide, by = "dropped") %>%
   mutate(alpha = hp_alpha, lambda = hp_lambda, lambda_env = hp_lambda_env, .before = 1)
 
-summary_file = paste0("exp3_dropone_summary_", param_tag, ".csv")
+summary_file = paste0("exp5_dropone_summary_", param_tag, ".csv")
 write_csv(df_full_summary,
           here("Calanda_JSDM", "output", "results", summary_file))
 cat(sprintf("  Saved %s\n", summary_file))
@@ -245,7 +245,7 @@ p_anova = ggplot(df_anova_diff, aes(x = dropped, y = diff, fill = metric)) +
   geom_col(position = position_dodge(width = 0.7), width = 0.6, alpha = 0.8) +
   scale_fill_manual(values = anova_colors) +
   labs(
-    title = "Experiment 3: Model-level anova R\u00B2 change when dropping each variable",
+    title = "Experiment 5: Model-level anova R\u00B2 change when dropping each variable",
     subtitle = paste0("Difference = drop-one minus BASE (negative = variable contributes positively)\n", hp_subtitle),
     x = "Dropped variable", y = expression(Delta * " McFadden R\u00B2"),
     fill = "Component"
@@ -257,11 +257,11 @@ p_anova = ggplot(df_anova_diff, aes(x = dropped, y = diff, fill = metric)) +
     strip.text = element_text(face = "bold")
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_anova_diff_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp5_anova_diff_", param_tag, ".pdf")),
     width = 14, height = 7)
 print(p_anova)
 dev.off()
-cat(sprintf("  Saved exp3_anova_diff_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp5_anova_diff_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 4: SPECIES-LEVEL MEAN DIFFERENCES
@@ -281,7 +281,7 @@ p_species = ggplot(df_species_diff, aes(x = dropped, y = mean_diff, fill = compo
   geom_col(position = position_dodge(width = 0.7), width = 0.6, alpha = 0.8) +
   scale_fill_manual(values = unit_colors) +
   labs(
-    title = "Experiment 3: Mean per-species difference (drop-one minus BASE)",
+    title = "Experiment 5: Mean per-species difference (drop-one minus BASE)",
     subtitle = paste0("Average across ", n_species, " species of (drop_i - base_i) per component\n", hp_subtitle),
     x = "Dropped variable", y = "Mean difference",
     fill = "Component"
@@ -292,11 +292,11 @@ p_species = ggplot(df_species_diff, aes(x = dropped, y = mean_diff, fill = compo
     legend.position = "bottom"
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_species_diff_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp5_species_diff_", param_tag, ".pdf")),
     width = 14, height = 7)
 print(p_species)
 dev.off()
-cat(sprintf("  Saved exp3_species_diff_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp5_species_diff_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 5: SITE-LEVEL MEAN DIFFERENCES
@@ -316,7 +316,7 @@ p_sites = ggplot(df_sites_diff, aes(x = dropped, y = mean_diff, fill = component
   geom_col(position = position_dodge(width = 0.7), width = 0.6, alpha = 0.8) +
   scale_fill_manual(values = unit_colors) +
   labs(
-    title = "Experiment 3: Mean per-site difference (drop-one minus BASE)",
+    title = "Experiment 5: Mean per-site difference (drop-one minus BASE)",
     subtitle = paste0("Average across ", n_sites, " sites of (drop_i - base_i) per component\n", hp_subtitle),
     x = "Dropped variable", y = "Mean difference",
     fill = "Component"
@@ -327,11 +327,11 @@ p_sites = ggplot(df_sites_diff, aes(x = dropped, y = mean_diff, fill = component
     legend.position = "bottom"
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_sites_diff_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp5_sites_diff_", param_tag, ".pdf")),
     width = 14, height = 7)
 print(p_sites)
 dev.off()
-cat(sprintf("  Saved exp3_sites_diff_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp5_sites_diff_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 6: CORRELATIONS (BASE vs DROP-ONE)
@@ -355,7 +355,7 @@ p_corr = ggplot(df_corr_long,
   scale_fill_manual(values = unit_colors) +
   facet_wrap(~level, ncol = 1) +
   labs(
-    title = "Experiment 3: Correlation between BASE and drop-one (per species/site)",
+    title = "Experiment 5: Correlation between BASE and drop-one (per species/site)",
     subtitle = paste0("Pearson r across ", n_species, " species or ", n_sites, " sites per component\n", hp_subtitle),
     x = "Dropped variable", y = "Pearson r",
     fill = "Component"
@@ -367,10 +367,10 @@ p_corr = ggplot(df_corr_long,
     strip.text = element_text(face = "bold")
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_correlations_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp5_correlations_", param_tag, ".pdf")),
     width = 14, height = 10)
 print(p_corr)
 dev.off()
-cat(sprintf("  Saved exp3_correlations_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp5_correlations_%s.pdf\n", param_tag))
 
-cat("\n=== Post Experiment 3 analysis complete ===\n")
+cat("\n=== Post Experiment 5 analysis complete ===\n")

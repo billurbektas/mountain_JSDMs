@@ -1,22 +1,22 @@
 # ==============================================================================
-# Script: 15_post_exp7_fit_saturation.R
-# Purpose: Post-analysis of sjSDM Experiment 7 - Model fit sampling saturation
+# Script: 15_post_exp4_fit_saturation.R
+# Purpose: Post-analysis of sjSDM Experiment 4 - Model fit sampling saturation
 #          Fixed ANOVA samples (30k), varying model fit sampling
 #          (5k, 10k, 20k, 30k). Reference = 30k.
 #          Isolates the effect of model fitting MC sampling from anova sampling.
 #
 # Inputs:
-#   - output/results/fit_saturation/exp7_anova_fit*_av30000_<param_tag>.rds
+#   - output/results/fit_saturation/exp4_anova_fit*_av30000_<param_tag>.rds
 #   - param_tag format: a<alpha>_l<lambda>_le<lambda_env>
 #
 # Outputs:
-#   - plot/exp7_anova_R2_<param_tag>.pdf
-#   - plot/exp7_species_violins_<param_tag>.pdf
-#   - plot/exp7_sites_violins_<param_tag>.pdf
-#   - plot/exp7_species_cor_mad_<param_tag>.pdf
-#   - plot/exp7_sites_cor_mad_<param_tag>.pdf
-#   - plot/exp7_timing_<param_tag>.pdf
-#   - output/results/exp7_fit_saturation_summary_<param_tag>.csv
+#   - plot/exp4_anova_R2_<param_tag>.pdf
+#   - plot/exp4_species_violins_<param_tag>.pdf
+#   - plot/exp4_sites_violins_<param_tag>.pdf
+#   - plot/exp4_species_cor_mad_<param_tag>.pdf
+#   - plot/exp4_sites_cor_mad_<param_tag>.pdf
+#   - plot/exp4_timing_<param_tag>.pdf
+#   - output/results/exp4_fit_saturation_summary_<param_tag>.csv
 #
 # Requires: R/00_setup/functions_calanda.R
 # ==============================================================================
@@ -68,19 +68,19 @@ dir.create(here("Calanda_JSDM", "plot"), showWarnings = FALSE, recursive = TRUE)
 # ==============================================================================
 # STEP 1: LOAD DATA
 # ==============================================================================
-cat("\n=== Step 1: Loading exp7 fit saturation results ===\n")
+cat("\n=== Step 1: Loading exp4 fit saturation results ===\n")
 
 # Detect available param tags from VP files
 all_vp_files = list.files(
   here("Calanda_JSDM", "output", "results", "fit_saturation"),
-  pattern = "^exp7_anova_fit.*\\.rds$", full.names = TRUE
+  pattern = "^exp4_anova_fit.*\\.rds$", full.names = TRUE
 )
 
-# Extract param_tag from first file (format: exp7_anova_fit<size>_av<anova>_<param_tag>.rds)
+# Extract param_tag from first file (format: exp4_anova_fit<size>_av<anova>_<param_tag>.rds)
 tag_match = regmatches(basename(all_vp_files[1]),
                        regexpr("a[0-9.]+_l[0-9.]+_le[0-9.]+(?=\\.)", basename(all_vp_files[1]), perl = TRUE))
 if (length(tag_match) == 0 || tag_match == "") {
-  stop("Could not detect param_tag from filenames. Expected format: exp7_anova_fit<size>_av<anova>_a<alpha>_l<lambda>_le<lambda_env>.rds")
+  stop("Could not detect param_tag from filenames. Expected format: exp4_anova_fit<size>_av<anova>_a<alpha>_l<lambda>_le<lambda_env>.rds")
 }
 param_tag = tag_match
 cat(sprintf("  Detected param_tag: %s\n", param_tag))
@@ -89,7 +89,7 @@ cat(sprintf("  Detected param_tag: %s\n", param_tag))
 vp_files = all_vp_files[grepl(param_tag, basename(all_vp_files), fixed = TRUE)]
 cat(sprintf("  Found %d VP files for %s\n", length(vp_files), param_tag))
 
-exp7_data    = list()
+exp4_data    = list()
 metrics_list = list()
 species_list = list()
 sites_list   = list()
@@ -109,7 +109,7 @@ for (f in vp_files) {
   fs  = run$fit_sampling
   fs_chr = as.character(fs)
 
-  exp7_data[[fs_chr]] = run
+  exp4_data[[fs_chr]] = run
 
   # Model-level McFadden R2 from anova results
   anova_res = run$partition$anova$results
@@ -183,7 +183,7 @@ p_anova = ggplot(df_model_lines,
   scale_x_log10(labels = scales::comma) +
   scale_color_manual(values = anova_colors) +
   labs(
-    title = "Experiment 7: Model-level McFadden R\u00B2 across fit sampling sizes",
+    title = "Experiment 4: Model-level McFadden R\u00B2 across fit sampling sizes",
     subtitle = hp_subtitle,
     x = "Model fit sampling (log scale)", y = "McFadden R\u00B2",
     color = "Component"
@@ -196,11 +196,11 @@ p_anova = ggplot(df_model_lines,
   coord_cartesian(clip = "off") +
   theme(plot.margin = margin(5.5, 40, 5.5, 5.5))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp7_anova_R2_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp4_anova_R2_", param_tag, ".pdf")),
     width = 12, height = 7)
 print(p_anova)
 dev.off()
-cat(sprintf("  Saved exp7_anova_R2_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp4_anova_R2_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 3: SPECIES VIOLIN PLOT
@@ -235,7 +235,7 @@ make_violin_plot = function(unit_long, title_label) {
     ) +
     scale_fill_manual(values = unit_colors) +
     labs(
-      title = sprintf("Experiment 7: %s-level variance partitioning across fit sampling sizes", title_label),
+      title = sprintf("Experiment 4: %s-level variance partitioning across fit sampling sizes", title_label),
       subtitle = hp_subtitle,
       x = "Model fit sampling", y = "Value",
       fill = "Component"
@@ -250,11 +250,11 @@ make_violin_plot = function(unit_long, title_label) {
 df_species_long = pivot_unit_long(df_species)
 p_species = make_violin_plot(df_species_long, "Species")
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp7_species_violins_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp4_species_violins_", param_tag, ".pdf")),
     width = 12, height = 7)
 print(p_species)
 dev.off()
-cat(sprintf("  Saved exp7_species_violins_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp4_species_violins_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 4: SITE VIOLIN PLOT
@@ -264,25 +264,25 @@ cat("\n=== Step 4: Site violin plot ===\n")
 df_sites_long = pivot_unit_long(df_sites)
 p_sites = make_violin_plot(df_sites_long, "Site")
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp7_sites_violins_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp4_sites_violins_", param_tag, ".pdf")),
     width = 12, height = 7)
 print(p_sites)
 dev.off()
-cat(sprintf("  Saved exp7_sites_violins_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp4_sites_violins_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 5: CORRELATIONS + MAD vs REFERENCE
 # ==============================================================================
 cat("\n=== Step 5: Correlations and MAD vs reference ===\n")
 
-ref_species = exp7_data[[as.character(ref_size)]]$partition$species
-ref_sites   = exp7_data[[as.character(ref_size)]]$partition$sites
+ref_species = exp4_data[[as.character(ref_size)]]$partition$species
+ref_sites   = exp4_data[[as.character(ref_size)]]$partition$sites
 
 corr_mad_list = list()
 
 for (fs in fit_sizes) {
-  p_sp = exp7_data[[as.character(fs)]]$partition$species
-  p_si = exp7_data[[as.character(fs)]]$partition$sites
+  p_sp = exp4_data[[as.character(fs)]]$partition$species
+  p_si = exp4_data[[as.character(fs)]]$partition$sites
 
   for (col in c("r2", "env", "spa", "codist")) {
     comp_label = recode(col, r2 = "Overall", env = "Environment",
@@ -335,7 +335,7 @@ p_sp_mad = df_corr_mad %>%
 
 p_species_corr_mad = p_sp_cor / p_sp_mad +
   plot_annotation(
-    title = sprintf("Experiment 7: Species-level fit saturation (reference = %s fit sampling)",
+    title = sprintf("Experiment 4: Species-level fit saturation (reference = %s fit sampling)",
                     format(ref_size, big.mark = ",")),
     subtitle = hp_subtitle,
     theme = theme(
@@ -344,11 +344,11 @@ p_species_corr_mad = p_sp_cor / p_sp_mad +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp7_species_cor_mad_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp4_species_cor_mad_", param_tag, ".pdf")),
     width = 10, height = 10)
 print(p_species_corr_mad)
 dev.off()
-cat(sprintf("  Saved exp7_species_cor_mad_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp4_species_cor_mad_%s.pdf\n", param_tag))
 
 # --- Sites: correlation + MAD ---
 p_si_cor = df_corr_mad %>%
@@ -383,7 +383,7 @@ p_si_mad = df_corr_mad %>%
 
 p_sites_corr_mad = p_si_cor / p_si_mad +
   plot_annotation(
-    title = sprintf("Experiment 7: Site-level fit saturation (reference = %s fit sampling)",
+    title = sprintf("Experiment 4: Site-level fit saturation (reference = %s fit sampling)",
                     format(ref_size, big.mark = ",")),
     subtitle = hp_subtitle,
     theme = theme(
@@ -392,11 +392,11 @@ p_sites_corr_mad = p_si_cor / p_si_mad +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp7_sites_cor_mad_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp4_sites_cor_mad_", param_tag, ".pdf")),
     width = 10, height = 10)
 print(p_sites_corr_mad)
 dev.off()
-cat(sprintf("  Saved exp7_sites_cor_mad_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp4_sites_cor_mad_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 6: TIMING PLOT
@@ -413,7 +413,7 @@ p_timing = ggplot(df_timing, aes(x = fit_sampling, y = vp_time_min)) +
             vjust = -1, size = 3.5) +
   scale_x_log10(labels = scales::comma) +
   labs(
-    title = "Experiment 7: Variance partitioning wall time",
+    title = "Experiment 4: Variance partitioning wall time",
     subtitle = paste0(hp_subtitle, "\nIncludes refitting 8 reduced models + MC evaluation"),
     x = "Model fit sampling (log scale)", y = "VP time (minutes)"
   ) +
@@ -421,11 +421,11 @@ p_timing = ggplot(df_timing, aes(x = fit_sampling, y = vp_time_min)) +
   coord_cartesian(clip = "off") +
   theme(plot.margin = margin(10, 5.5, 5.5, 5.5))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp7_timing_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp4_timing_", param_tag, ".pdf")),
     width = 8, height = 5)
 print(p_timing)
 dev.off()
-cat(sprintf("  Saved exp7_timing_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp4_timing_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 7: SUMMARY TABLE
@@ -466,10 +466,10 @@ df_summary = df_anova_wide %>%
     .after = fit_sampling
   )
 
-summary_file = paste0("exp7_fit_saturation_summary_", param_tag, ".csv")
+summary_file = paste0("exp4_fit_saturation_summary_", param_tag, ".csv")
 write_csv(df_summary,
           here("Calanda_JSDM", "output", "results", summary_file))
 cat(sprintf("  Saved %s\n", summary_file))
 print(df_summary)
 
-cat("\n=== Post Experiment 7 analysis complete ===\n")
+cat("\n=== Post Experiment 4 analysis complete ===\n")

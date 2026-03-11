@@ -1,22 +1,22 @@
 # ==============================================================================
-# Script: 13_post_exp6_anova_saturation.R
-# Purpose: Post-analysis of sjSDM Experiment 6 - ANOVA sampling saturation
+# Script: 13_post_exp3_anova_saturation.R
+# Purpose: Post-analysis of sjSDM Experiment 3 - ANOVA sampling saturation
 #          Same fitted model (sampling = 5000), varying anova samples
 #          (10k, 20k, 30k, 50k). Reference = 50k.
 #          Isolates the effect of anova MC sampling from model fitting.
 #
 # Inputs:
-#   - output/results/anova_saturation/exp6_anova_*_<param_tag>.rds
+#   - output/results/anova_saturation/exp3_anova_*_<param_tag>.rds
 #   - param_tag format: a<alpha>_l<lambda>_le<lambda_env>
 #
 # Outputs:
-#   - plot/exp6_anova_R2_<param_tag>.pdf
-#   - plot/exp6_species_violins_<param_tag>.pdf
-#   - plot/exp6_sites_violins_<param_tag>.pdf
-#   - plot/exp6_species_cor_mad_<param_tag>.pdf
-#   - plot/exp6_sites_cor_mad_<param_tag>.pdf
-#   - plot/exp6_timing_<param_tag>.pdf
-#   - output/results/exp6_anova_saturation_summary_<param_tag>.csv
+#   - plot/exp3_anova_R2_<param_tag>.pdf
+#   - plot/exp3_species_violins_<param_tag>.pdf
+#   - plot/exp3_sites_violins_<param_tag>.pdf
+#   - plot/exp3_species_cor_mad_<param_tag>.pdf
+#   - plot/exp3_sites_cor_mad_<param_tag>.pdf
+#   - plot/exp3_timing_<param_tag>.pdf
+#   - output/results/exp3_anova_saturation_summary_<param_tag>.csv
 #
 # Requires: R/00_setup/functions_calanda.R
 # ==============================================================================
@@ -67,19 +67,19 @@ dir.create(here("Calanda_JSDM", "plot"), showWarnings = FALSE, recursive = TRUE)
 # ==============================================================================
 # STEP 1: LOAD DATA
 # ==============================================================================
-cat("\n=== Step 1: Loading exp6 anova saturation results ===\n")
+cat("\n=== Step 1: Loading exp3 anova saturation results ===\n")
 
 # Detect available param tags from anova files
 all_anova_files = list.files(
   here("Calanda_JSDM", "output", "results", "anova_saturation"),
-  pattern = "^exp6_anova_.*\\.rds$", full.names = TRUE
+  pattern = "^exp3_anova_.*\\.rds$", full.names = TRUE
 )
 
-# Extract param_tag from first file (format: exp6_anova_<size>_<param_tag>.rds)
+# Extract param_tag from first file (format: exp3_anova_<size>_<param_tag>.rds)
 tag_match = regmatches(basename(all_anova_files[1]),
                        regexpr("a[0-9.]+_l[0-9.]+_le[0-9.]+(?=\\.)", basename(all_anova_files[1]), perl = TRUE))
 if (length(tag_match) == 0 || tag_match == "") {
-  stop("Could not detect param_tag from filenames. Expected format: exp6_anova_<size>_a<alpha>_l<lambda>_le<lambda_env>.rds")
+  stop("Could not detect param_tag from filenames. Expected format: exp3_anova_<size>_a<alpha>_l<lambda>_le<lambda_env>.rds")
 }
 param_tag = tag_match
 cat(sprintf("  Detected param_tag: %s\n", param_tag))
@@ -88,7 +88,7 @@ cat(sprintf("  Detected param_tag: %s\n", param_tag))
 vp_files = all_anova_files[grepl(param_tag, basename(all_anova_files), fixed = TRUE)]
 cat(sprintf("  Found %d VP files for %s\n", length(vp_files), param_tag))
 
-exp6_data    = list()
+exp3_data    = list()
 metrics_list = list()
 species_list = list()
 sites_list   = list()
@@ -107,7 +107,7 @@ for (f in vp_files) {
   ns  = run$anova_samples
   ns_chr = as.character(ns)
 
-  exp6_data[[ns_chr]] = run
+  exp3_data[[ns_chr]] = run
 
   # Model-level McFadden R2 from anova results
   anova_res = run$partition$anova$results
@@ -181,7 +181,7 @@ p_anova = ggplot(df_model_lines,
   scale_x_log10(labels = scales::comma) +
   scale_color_manual(values = anova_colors) +
   labs(
-    title = "Experiment 6: Model-level McFadden R\u00B2 across ANOVA sample sizes",
+    title = "Experiment 3: Model-level McFadden R\u00B2 across ANOVA sample sizes",
     subtitle = hp_subtitle,
     x = "ANOVA samples (log scale)", y = "McFadden R\u00B2",
     color = "Component"
@@ -194,11 +194,11 @@ p_anova = ggplot(df_model_lines,
   coord_cartesian(clip = "off") +
   theme(plot.margin = margin(5.5, 40, 5.5, 5.5))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_anova_R2_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp3_anova_R2_", param_tag, ".pdf")),
     width = 12, height = 7)
 print(p_anova)
 dev.off()
-cat(sprintf("  Saved exp6_anova_R2_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp3_anova_R2_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 3: SPECIES VIOLIN PLOT
@@ -233,7 +233,7 @@ make_violin_plot = function(unit_long, title_label) {
     ) +
     scale_fill_manual(values = unit_colors) +
     labs(
-      title = sprintf("Experiment 6: %s-level variance partitioning across ANOVA sample sizes", title_label),
+      title = sprintf("Experiment 3: %s-level variance partitioning across ANOVA sample sizes", title_label),
       subtitle = hp_subtitle,
       x = "ANOVA samples", y = "Value",
       fill = "Component"
@@ -248,11 +248,11 @@ make_violin_plot = function(unit_long, title_label) {
 df_species_long = pivot_unit_long(df_species)
 p_species = make_violin_plot(df_species_long, "Species")
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_species_violins_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp3_species_violins_", param_tag, ".pdf")),
     width = 12, height = 7)
 print(p_species)
 dev.off()
-cat(sprintf("  Saved exp6_species_violins_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp3_species_violins_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 4: SITE VIOLIN PLOT
@@ -262,25 +262,25 @@ cat("\n=== Step 4: Site violin plot ===\n")
 df_sites_long = pivot_unit_long(df_sites)
 p_sites = make_violin_plot(df_sites_long, "Site")
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_sites_violins_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp3_sites_violins_", param_tag, ".pdf")),
     width = 12, height = 7)
 print(p_sites)
 dev.off()
-cat(sprintf("  Saved exp6_sites_violins_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp3_sites_violins_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 5: CORRELATIONS + MAD vs REFERENCE
 # ==============================================================================
 cat("\n=== Step 5: Correlations and MAD vs reference ===\n")
 
-ref_species = exp6_data[[as.character(ref_size)]]$partition$species
-ref_sites   = exp6_data[[as.character(ref_size)]]$partition$sites
+ref_species = exp3_data[[as.character(ref_size)]]$partition$species
+ref_sites   = exp3_data[[as.character(ref_size)]]$partition$sites
 
 corr_mad_list = list()
 
 for (ns in anova_sizes) {
-  p_sp = exp6_data[[as.character(ns)]]$partition$species
-  p_si = exp6_data[[as.character(ns)]]$partition$sites
+  p_sp = exp3_data[[as.character(ns)]]$partition$species
+  p_si = exp3_data[[as.character(ns)]]$partition$sites
 
   for (col in c("r2", "env", "spa", "codist")) {
     comp_label = recode(col, r2 = "Overall", env = "Environment",
@@ -333,7 +333,7 @@ p_sp_mad = df_corr_mad %>%
 
 p_species_corr_mad = p_sp_cor / p_sp_mad +
   plot_annotation(
-    title = sprintf("Experiment 6: Species-level ANOVA saturation (reference = %s samples)",
+    title = sprintf("Experiment 3: Species-level ANOVA saturation (reference = %s samples)",
                     format(ref_size, big.mark = ",")),
     subtitle = hp_subtitle,
     theme = theme(
@@ -342,11 +342,11 @@ p_species_corr_mad = p_sp_cor / p_sp_mad +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_species_cor_mad_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp3_species_cor_mad_", param_tag, ".pdf")),
     width = 10, height = 10)
 print(p_species_corr_mad)
 dev.off()
-cat(sprintf("  Saved exp6_species_cor_mad_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp3_species_cor_mad_%s.pdf\n", param_tag))
 
 # --- Sites: correlation + MAD ---
 p_si_cor = df_corr_mad %>%
@@ -381,7 +381,7 @@ p_si_mad = df_corr_mad %>%
 
 p_sites_corr_mad = p_si_cor / p_si_mad +
   plot_annotation(
-    title = sprintf("Experiment 6: Site-level ANOVA saturation (reference = %s samples)",
+    title = sprintf("Experiment 3: Site-level ANOVA saturation (reference = %s samples)",
                     format(ref_size, big.mark = ",")),
     subtitle = hp_subtitle,
     theme = theme(
@@ -390,11 +390,11 @@ p_sites_corr_mad = p_si_cor / p_si_mad +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_sites_cor_mad_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp3_sites_cor_mad_", param_tag, ".pdf")),
     width = 10, height = 10)
 print(p_sites_corr_mad)
 dev.off()
-cat(sprintf("  Saved exp6_sites_cor_mad_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp3_sites_cor_mad_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 5b: PER-SPECIES RAW VALUE TRAJECTORIES
@@ -403,7 +403,7 @@ cat("\n=== Step 5b: Per-species raw value trajectories ===\n")
 
 sp_raw_list = list()
 for (ns in anova_sizes) {
-  p_sp = exp6_data[[as.character(ns)]]$partition$species
+  p_sp = exp3_data[[as.character(ns)]]$partition$species
   for (col in c("env", "spa", "codist", "r2")) {
     comp_label = recode(col, r2 = "Overall", env = "Environment",
                         spa = "Spatial", codist = "Biotic")
@@ -444,10 +444,10 @@ p_sp_raw = ggplot(df_sp_raw, aes(x = anova_samples, y = value,
   theme(strip.text = element_text(face = "bold"))
 
 # Comparisons: last two runs + ref vs 130k, 100k, 80k
-ref_sp   = exp6_data[[as.character(ref_size)]]$partition$species
-sp_130k  = exp6_data[["130000"]]$partition$species
-sp_100k  = exp6_data[["100000"]]$partition$species
-sp_80k   = exp6_data[["80000"]]$partition$species
+ref_sp   = exp3_data[[as.character(ref_size)]]$partition$species
+sp_130k  = exp3_data[["130000"]]$partition$species
+sp_100k  = exp3_data[["100000"]]$partition$species
+sp_80k   = exp3_data[["80000"]]$partition$species
 
 sp_hist_list = list()
 for (col in c("env", "spa", "codist", "r2")) {
@@ -522,7 +522,7 @@ p_sp_hist = ggplot(df_sp_bin_summary, aes(x = mean_abs_diff, y = count, fill = m
 p_sp_combined = (p_sp_raw | p_sp_hist) +
   plot_layout(widths = c(1, 1)) +
   plot_annotation(
-    title = "Experiment 6: Per-species VP values across ANOVA sample sizes",
+    title = "Experiment 3: Per-species VP values across ANOVA sample sizes",
     subtitle = hp_subtitle,
     theme = theme(
       plot.title = element_text(face = "bold", size = 13),
@@ -530,11 +530,11 @@ p_sp_combined = (p_sp_raw | p_sp_hist) +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_species_raw_trajectories_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp3_species_raw_trajectories_", param_tag, ".pdf")),
     width = 22, height = 12)
 print(p_sp_combined)
 dev.off()
-cat(sprintf("  Saved exp6_species_raw_trajectories_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp3_species_raw_trajectories_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 5c: PER-SITE RAW VALUE TRAJECTORIES
@@ -543,7 +543,7 @@ cat("\n=== Step 5c: Per-site raw value trajectories ===\n")
 
 si_raw_list = list()
 for (ns in anova_sizes) {
-  p_si = exp6_data[[as.character(ns)]]$partition$sites
+  p_si = exp3_data[[as.character(ns)]]$partition$sites
   for (col in c("env", "spa", "codist", "r2")) {
     comp_label = recode(col, r2 = "Overall", env = "Environment",
                         spa = "Spatial", codist = "Biotic")
@@ -578,10 +578,10 @@ p_si_raw = ggplot(df_si_raw, aes(x = anova_samples, y = value,
   theme(strip.text = element_text(face = "bold"))
 
 # Comparisons: last two runs + ref vs 130k, 100k, 80k
-ref_si   = exp6_data[[as.character(ref_size)]]$partition$sites
-si_130k  = exp6_data[["130000"]]$partition$sites
-si_100k  = exp6_data[["100000"]]$partition$sites
-si_80k   = exp6_data[["80000"]]$partition$sites
+ref_si   = exp3_data[[as.character(ref_size)]]$partition$sites
+si_130k  = exp3_data[["130000"]]$partition$sites
+si_100k  = exp3_data[["100000"]]$partition$sites
+si_80k   = exp3_data[["80000"]]$partition$sites
 
 si_hist_list = list()
 for (col in c("env", "spa", "codist", "r2")) {
@@ -656,7 +656,7 @@ p_si_hist = ggplot(df_si_bin_summary, aes(x = mean_abs_diff, y = count, fill = m
 p_si_combined = (p_si_raw | p_si_hist) +
   plot_layout(widths = c(1, 1)) +
   plot_annotation(
-    title = "Experiment 6: Per-site VP values across ANOVA sample sizes",
+    title = "Experiment 3: Per-site VP values across ANOVA sample sizes",
     subtitle = hp_subtitle,
     theme = theme(
       plot.title = element_text(face = "bold", size = 13),
@@ -664,22 +664,22 @@ p_si_combined = (p_si_raw | p_si_hist) +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_sites_raw_trajectories_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp3_sites_raw_trajectories_", param_tag, ".pdf")),
     width = 22, height = 12)
 print(p_si_combined)
 dev.off()
-cat(sprintf("  Saved exp6_sites_raw_trajectories_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp3_sites_raw_trajectories_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 5d: PER-SPECIES ABSOLUTE DIFFERENCE FROM REFERENCE
 # ==============================================================================
 cat("\n=== Step 5d: Per-species absolute difference from reference ===\n")
 
-ref_species_mat = exp6_data[[as.character(ref_size)]]$partition$species
+ref_species_mat = exp3_data[[as.character(ref_size)]]$partition$species
 
 sp_absdiff_list = list()
 for (ns in anova_sizes) {
-  p_sp = exp6_data[[as.character(ns)]]$partition$species
+  p_sp = exp3_data[[as.character(ns)]]$partition$species
   for (col in c("env", "spa", "codist", "r2")) {
     comp_label = recode(col, r2 = "Overall", env = "Environment",
                         spa = "Spatial", codist = "Biotic")
@@ -699,7 +699,7 @@ p_sp_absdiff = ggplot(df_sp_absdiff, aes(x = anova_samples, y = abs_diff, group 
   facet_wrap(~ component, scales = "free_y") +
   scale_x_log10(labels = scales::comma) +
   labs(
-    title = sprintf("Experiment 6: Per-species |difference| from reference (%s samples)",
+    title = sprintf("Experiment 3: Per-species |difference| from reference (%s samples)",
                     format(ref_size, big.mark = ",")),
     subtitle = hp_subtitle,
     x = "ANOVA samples (log scale)", y = "| value - reference |"
@@ -707,22 +707,22 @@ p_sp_absdiff = ggplot(df_sp_absdiff, aes(x = anova_samples, y = abs_diff, group 
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_species_absdiff_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp3_species_absdiff_", param_tag, ".pdf")),
     width = 12, height = 9)
 print(p_sp_absdiff)
 dev.off()
-cat(sprintf("  Saved exp6_species_absdiff_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp3_species_absdiff_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 5e: PER-SITE ABSOLUTE DIFFERENCE FROM REFERENCE
 # ==============================================================================
 cat("\n=== Step 5e: Per-site absolute difference from reference ===\n")
 
-ref_sites_mat = exp6_data[[as.character(ref_size)]]$partition$sites
+ref_sites_mat = exp3_data[[as.character(ref_size)]]$partition$sites
 
 si_absdiff_list = list()
 for (ns in anova_sizes) {
-  p_si = exp6_data[[as.character(ns)]]$partition$sites
+  p_si = exp3_data[[as.character(ns)]]$partition$sites
   for (col in c("env", "spa", "codist", "r2")) {
     comp_label = recode(col, r2 = "Overall", env = "Environment",
                         spa = "Spatial", codist = "Biotic")
@@ -742,7 +742,7 @@ p_si_absdiff = ggplot(df_si_absdiff, aes(x = anova_samples, y = abs_diff, group 
   facet_wrap(~ component, scales = "free_y") +
   scale_x_log10(labels = scales::comma) +
   labs(
-    title = sprintf("Experiment 6: Per-site |difference| from reference (%s samples)",
+    title = sprintf("Experiment 3: Per-site |difference| from reference (%s samples)",
                     format(ref_size, big.mark = ",")),
     subtitle = hp_subtitle,
     x = "ANOVA samples (log scale)", y = "| value - reference |"
@@ -750,11 +750,11 @@ p_si_absdiff = ggplot(df_si_absdiff, aes(x = anova_samples, y = abs_diff, group 
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_sites_absdiff_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp3_sites_absdiff_", param_tag, ".pdf")),
     width = 12, height = 9)
 print(p_si_absdiff)
 dev.off()
-cat(sprintf("  Saved exp6_sites_absdiff_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp3_sites_absdiff_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 6: TIMING PLOT
@@ -771,7 +771,7 @@ p_timing = ggplot(df_timing, aes(x = anova_samples, y = vp_time_min)) +
             vjust = -1, size = 3.5) +
   scale_x_log10(labels = scales::comma) +
   labs(
-    title = "Experiment 6: Variance partitioning wall time",
+    title = "Experiment 3: Variance partitioning wall time",
     subtitle = paste0(hp_subtitle, "\nIncludes refitting 8 reduced models + MC evaluation"),
     x = "ANOVA samples (log scale)", y = "VP time (minutes)"
   ) +
@@ -779,11 +779,11 @@ p_timing = ggplot(df_timing, aes(x = anova_samples, y = vp_time_min)) +
   coord_cartesian(clip = "off") +
   theme(plot.margin = margin(10, 5.5, 5.5, 5.5))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_timing_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", paste0("exp3_timing_", param_tag, ".pdf")),
     width = 8, height = 5)
 print(p_timing)
 dev.off()
-cat(sprintf("  Saved exp6_timing_%s.pdf\n", param_tag))
+cat(sprintf("  Saved exp3_timing_%s.pdf\n", param_tag))
 
 # ==============================================================================
 # STEP 7: SUMMARY TABLE
@@ -820,10 +820,10 @@ df_summary = df_anova_wide %>%
   left_join(df_corr_mad_wide, by = "anova_samples") %>%
   mutate(alpha = hp_alpha, lambda = hp_lambda, lambda_env = hp_lambda_env, .after = anova_samples)
 
-summary_file = paste0("exp6_anova_saturation_summary_", param_tag, ".csv")
+summary_file = paste0("exp3_anova_saturation_summary_", param_tag, ".csv")
 write_csv(df_summary,
           here("Calanda_JSDM", "output", "results", summary_file))
 cat(sprintf("  Saved %s\n", summary_file))
 print(df_summary)
 
-cat("\n=== Post Experiment 6 analysis complete ===\n")
+cat("\n=== Post Experiment 3 analysis complete ===\n")
