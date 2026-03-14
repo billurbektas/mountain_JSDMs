@@ -47,7 +47,7 @@ unit_colors = c(
   "Biotic"      = color_codist
 )
 
-dir.create(here("Calanda_JSDM", "plot"), showWarnings = FALSE, recursive = TRUE)
+dir.create(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures"), showWarnings = FALSE, recursive = TRUE)
 
 # ==============================================================================
 # STEP 1: LOAD DATA
@@ -184,7 +184,7 @@ p_violins = (p_auc | p_ll) +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_prediction_violins_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp6_prediction_violins_", param_tag, ".pdf")),
     width = 10, height = 7)
 print(p_violins)
 dev.off()
@@ -250,7 +250,7 @@ p_model_vp = ggplot(df_model_vp, aes(x = component, y = R2, color = component)) 
   coord_cartesian(clip = "off") +
   theme(plot.margin = margin(15, 5.5, 5.5, 5.5))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_model_stability_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp6_vp_model_stability_", param_tag, ".pdf")),
     width = 8, height = 7)
 print(p_model_vp)
 dev.off()
@@ -358,7 +358,7 @@ p_sp_stability = p_sp_means / p_sp_sd +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_species_stability_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp6_vp_species_stability_", param_tag, ".pdf")),
     width = 12, height = 12)
 print(p_sp_stability)
 dev.off()
@@ -418,7 +418,7 @@ p_sp_ranked = ggplot(df_sp_species_ci,
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_species_ranked_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp6_vp_species_ranked_", param_tag, ".pdf")),
     width = 14, height = 10)
 print(p_sp_ranked)
 dev.off()
@@ -492,7 +492,7 @@ p_sp_prop_ranked = ggplot(df_sp_prop_ci,
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_species_proportions_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp6_vp_species_proportions_", param_tag, ".pdf")),
     width = 14, height = 10)
 print(p_sp_prop_ranked)
 dev.off()
@@ -600,7 +600,7 @@ p_si_stability = p_si_means / p_si_sd +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_sites_stability_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp6_vp_sites_stability_", param_tag, ".pdf")),
     width = 12, height = 12)
 print(p_si_stability)
 dev.off()
@@ -651,7 +651,7 @@ p_si_ranked = ggplot(df_si_site_ci,
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_sites_ranked_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp6_vp_sites_ranked_", param_tag, ".pdf")),
     width = 14, height = 10)
 print(p_si_ranked)
 dev.off()
@@ -722,7 +722,7 @@ p_si_prop_ranked = ggplot(df_si_prop_ci,
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp6_vp_sites_proportions_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp6_vp_sites_proportions_", param_tag, ".pdf")),
     width = 14, height = 10)
 print(p_si_prop_ranked)
 dev.off()

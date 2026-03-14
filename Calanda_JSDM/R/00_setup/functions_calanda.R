@@ -1735,3 +1735,111 @@ plot_anova_custom = function(x,
 add_alpha = function(col, alpha = 0.25) {
   apply(sapply(col, grDevices::col2rgb) / 255, 2, function(x) grDevices::rgb(x[1], x[2], x[3], alpha = alpha))
 }
+
+# ==============================================================================
+# build_ternary — ternary VP plot (kept for future use)
+# ==============================================================================
+#' Build a ternary variance partitioning plot
+#'
+#' @param df Data frame with env, codist, spa columns
+#' @param fill_col Column name for point fill color
+#' @param fill_label Legend label for fill
+#' @param title_text Plot title
+#' @param color_env,color_codist,color_spa Colors for triangle edges
+#' @param label_species If not NULL, label extreme species
+#' @return ggplot object
+build_ternary = function(df, fill_col, fill_label, title_text,
+                         color_env, color_codist, color_spa,
+                         label_species = NULL) {
+  df = df %>% mutate(
+    total = env + codist + spa,
+    env_prop = env / total,
+    codist_prop = codist / total,
+    spa_prop = spa / total
+  )
+
+  coords = t(sapply(seq_len(nrow(df)), function(i) {
+    get_coords(c(df$spa_prop[i], df$codist_prop[i], df$env_prop[i]))
+  }))
+  df$x = coords[, 1]
+  df$y = coords[, 2]
+
+  triangle_edges = data.frame(
+    x_start = c(0, 1, 0.5), y_start = c(0, 0, 0.866),
+    x_end = c(1, 0.5, 0), y_end = c(0, 0.866, 0),
+    edge = c("spa", "codist", "env")
+  )
+  grid_lines = data.frame(); grid_labels = data.frame()
+  for (val in seq(0.2, 0.8, 0.2)) {
+    grid_lines = bind_rows(grid_lines,
+      data.frame(x = c(val/2, 1 - val/2), y = c(val*0.866, val*0.866),
+                 group = paste0("h", val), axis = "codist"),
+      data.frame(x = c(val, 0.5 + val/2), y = c(0, (1 - val)*0.866),
+                 group = paste0("l", val), axis = "spa"),
+      data.frame(x = c(1 - val, 0.5 - val/2), y = c(0, (1 - val)*0.866),
+                 group = paste0("r", val), axis = "env")
+    )
+    lp1 = get_coords(c(1 - val, 0, val))
+    lp2 = get_coords(c(1 - val, val, 0))
+    lp3 = get_coords(c(0, val, 1 - val))
+    grid_labels = bind_rows(grid_labels,
+      data.frame(x = lp1[1], y = lp1[2] - 0.03, label = as.character(1 - val), angle = 60),
+      data.frame(x = lp2[1] + 0.05, y = lp2[2], label = as.character(val), angle = 0),
+      data.frame(x = lp3[1] - 0.03, y = lp3[2] + 0.03, label = as.character(1 - val), angle = -50)
+    )
+  }
+
+  color_palette = colorRampPalette(c("gray90", "gray20"))
+
+  p = ggplot() +
+    geom_segment(data = triangle_edges,
+                 aes(x = x_start, y = y_start, xend = x_end, yend = y_end, color = edge),
+                 linewidth = 1.2) +
+    scale_color_manual(values = c("env" = color_env, "codist" = color_codist, "spa" = color_spa),
+                       guide = "none") +
+    geom_line(data = grid_lines, aes(x = x, y = y, group = group, color = axis),
+              linewidth = 0.5, alpha = 0.3) +
+    geom_text(data = grid_labels, aes(x = x, y = y, label = label, angle = angle),
+              size = 5, color = "gray30") +
+    geom_point(data = df, aes(x = x, y = y, fill = .data[[fill_col]]),
+               shape = 21, size = 3, alpha = 0.7, color = "black", stroke = 0.2) +
+    scale_fill_gradientn(colors = color_palette(100),
+                         name = fill_label,
+                         guide = guide_colorbar(barwidth = 0.8, barheight = 8)) +
+    annotate("text", x = 0, y = 0, label = "Environment",
+             color = color_env, fontface = "bold", hjust = 1.2, size = 4.5) +
+    annotate("text", x = 0.5, y = 0.95, label = "Species associations",
+             color = color_codist, fontface = "bold", hjust = 1, size = 4.5) +
+    annotate("text", x = 1, y = 0.01, label = "Space",
+             color = color_spa, fontface = "bold", hjust = -0.6, size = 4.5) +
+    ggtitle(title_text) +
+    coord_fixed(clip = "off") +
+    theme_void() +
+    theme(plot.title = element_text(hjust = -0.1, face = "bold", size = 12),
+          legend.position = "right",
+          plot.margin = margin(20, 10, 30, 40))
+
+  if (!is.null(label_species) && "species_name" %in% names(df)) {
+    df = df %>% mutate(
+      dist_env = sqrt(x^2 + y^2),
+      dist_codist = sqrt((x - 0.5)^2 + (y - 0.866)^2),
+      dist_spa = sqrt((x - 1)^2 + y^2)
+    )
+    labeled = bind_rows(
+      df %>% filter(env_prop > 0.8) %>% arrange(dist_env) %>% head(3),
+      df %>% filter(codist_prop > 0.8) %>% arrange(dist_codist) %>% head(3),
+      df %>% filter(spa_prop > 0.8) %>% arrange(dist_spa) %>% head(3),
+      df %>% filter(env_prop >= 0.25 & env_prop <= 0.4,
+                    codist_prop >= 0.25 & codist_prop <= 0.4,
+                    spa_prop >= 0.25 & spa_prop <= 0.4) %>%
+        mutate(dist_center = sqrt((x - 0.5)^2 + (y - 0.289)^2)) %>%
+        arrange(dist_center) %>% head(3)
+    ) %>% distinct(species_name, .keep_all = TRUE) %>%
+      mutate(label = abbrev_species(species_name))
+    p = p + geom_text_repel(data = labeled, aes(x = x, y = y, label = label),
+                            size = 3.5, fontface = "italic",
+                            force = 10, min.segment.length = 0.01,
+                            segment.color = "gray50")
+  }
+  p
+}

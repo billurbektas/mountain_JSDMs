@@ -62,7 +62,7 @@ unit_colors = c(
   "Biotic"      = color_codist
 )
 
-dir.create(here("Calanda_JSDM", "plot"), showWarnings = FALSE, recursive = TRUE)
+dir.create(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures"), showWarnings = FALSE, recursive = TRUE)
 
 # ==============================================================================
 # STEP 1: LOAD DATA
@@ -194,7 +194,7 @@ p_anova = ggplot(df_model_lines,
   coord_cartesian(clip = "off") +
   theme(plot.margin = margin(5.5, 40, 5.5, 5.5))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_anova_R2_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp3_anova_R2_", param_tag, ".pdf")),
     width = 12, height = 7)
 print(p_anova)
 dev.off()
@@ -248,7 +248,7 @@ make_violin_plot = function(unit_long, title_label) {
 df_species_long = pivot_unit_long(df_species)
 p_species = make_violin_plot(df_species_long, "Species")
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_species_violins_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp3_species_violins_", param_tag, ".pdf")),
     width = 12, height = 7)
 print(p_species)
 dev.off()
@@ -262,7 +262,7 @@ cat("\n=== Step 4: Site violin plot ===\n")
 df_sites_long = pivot_unit_long(df_sites)
 p_sites = make_violin_plot(df_sites_long, "Site")
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_sites_violins_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp3_sites_violins_", param_tag, ".pdf")),
     width = 12, height = 7)
 print(p_sites)
 dev.off()
@@ -342,7 +342,7 @@ p_species_corr_mad = p_sp_cor / p_sp_mad +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_species_cor_mad_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp3_species_cor_mad_", param_tag, ".pdf")),
     width = 10, height = 10)
 print(p_species_corr_mad)
 dev.off()
@@ -390,7 +390,7 @@ p_sites_corr_mad = p_si_cor / p_si_mad +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_sites_cor_mad_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp3_sites_cor_mad_", param_tag, ".pdf")),
     width = 10, height = 10)
 print(p_sites_corr_mad)
 dev.off()
@@ -530,7 +530,7 @@ p_sp_combined = (p_sp_raw | p_sp_hist) +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_species_raw_trajectories_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp3_species_raw_trajectories_", param_tag, ".pdf")),
     width = 22, height = 12)
 print(p_sp_combined)
 dev.off()
@@ -664,7 +664,7 @@ p_si_combined = (p_si_raw | p_si_hist) +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_sites_raw_trajectories_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp3_sites_raw_trajectories_", param_tag, ".pdf")),
     width = 22, height = 12)
 print(p_si_combined)
 dev.off()
@@ -707,7 +707,7 @@ p_sp_absdiff = ggplot(df_sp_absdiff, aes(x = anova_samples, y = abs_diff, group 
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_species_absdiff_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp3_species_absdiff_", param_tag, ".pdf")),
     width = 12, height = 9)
 print(p_sp_absdiff)
 dev.off()
@@ -750,7 +750,7 @@ p_si_absdiff = ggplot(df_si_absdiff, aes(x = anova_samples, y = abs_diff, group 
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_sites_absdiff_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp3_sites_absdiff_", param_tag, ".pdf")),
     width = 12, height = 9)
 print(p_si_absdiff)
 dev.off()
@@ -779,7 +779,7 @@ p_timing = ggplot(df_timing, aes(x = anova_samples, y = vp_time_min)) +
   coord_cartesian(clip = "off") +
   theme(plot.margin = margin(10, 5.5, 5.5, 5.5))
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp3_timing_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp3_timing_", param_tag, ".pdf")),
     width = 8, height = 5)
 print(p_timing)
 dev.off()

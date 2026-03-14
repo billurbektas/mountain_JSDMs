@@ -36,7 +36,7 @@ color_codist  = "#00bd89"
 color_overall = "black"
 
 # Ensure output directories exist
-dir.create(here("Calanda_JSDM", "plot"),
+dir.create(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures"),
            showWarnings = FALSE, recursive = TRUE)
 
 # ==============================================================================
@@ -132,7 +132,7 @@ p_conv = ggplot(df_history, aes(x = iteration, y = loss, color = run_id)) +
   theme_bw() +
   theme(legend.position = "none")
 
-pdf(here("Calanda_JSDM", "plot", "exp1_convergence.pdf"),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", "exp1_convergence.pdf"),
     width = 10, height = 6)
 print(p_conv)
 dev.off()
@@ -209,7 +209,7 @@ df_species_long = pivot_unit_long(df_species)
 
 p_species = make_violin_plot(df_species_long, "Species")
 
-pdf(here("Calanda_JSDM", "plot", "exp1_species_violins.pdf"),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", "exp1_species_violins.pdf"),
     width = 14, height = 8)
 print(p_species)
 dev.off()
@@ -224,7 +224,7 @@ df_sites_long = pivot_unit_long(df_sites)
 
 p_sites = make_violin_plot(df_sites_long, "Site")
 
-pdf(here("Calanda_JSDM", "plot", "exp1_sites_violins.pdf"),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", "exp1_sites_violins.pdf"),
     width = 14, height = 8)
 print(p_sites)
 dev.off()
@@ -297,7 +297,7 @@ p_anova = ggplot(df_model_lines,
   coord_cartesian(clip = "off") +
   theme(plot.margin = margin(5.5, 40, 5.5, 5.5))
 
-pdf(here("Calanda_JSDM", "plot", "exp1_anova_R2.pdf"),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", "exp1_anova_R2.pdf"),
     width = 14, height = 8)
 print(p_anova)
 dev.off()

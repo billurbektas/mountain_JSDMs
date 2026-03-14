@@ -43,16 +43,19 @@ unit_colors = c(
   "Biotic"      = color_codist
 )
 
-dir.create(here("Calanda_JSDM", "plot"), showWarnings = FALSE, recursive = TRUE)
+dir.create(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures"), showWarnings = FALSE, recursive = TRUE)
 
 # ==============================================================================
 # STEP 1: LOAD DATA
 # ==============================================================================
 cat("\n=== Step 1: Loading data ===\n")
 
-# Get Y matrix for prevalence
-model = readRDS(here("Calanda_JSDM", "output", "results", "anova_saturation",
-                     "exp3_model_fit5000.rds"))
+# Get Y matrix for prevalence (detect param_tag from model file)
+model_files = list.files(
+  here("Calanda_JSDM", "output", "results", "anova_saturation"),
+  pattern = "^exp3_model_fit5000.*\\.rds$", full.names = TRUE
+)
+model = readRDS(model_files[1])
 Y = model$data$Y
 n_presences = colSums(Y)
 n_sites = nrow(Y)
@@ -154,7 +157,7 @@ p_sd_prev = ggplot(df_stability,
   theme(legend.position = "none",
         strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", "exp3_species_sd_vs_prevalence.pdf"),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", "exp3_species_sd_vs_prevalence.pdf"),
     width = 12, height = 8)
 print(p_sd_prev)
 dev.off()
@@ -182,7 +185,7 @@ p_range_prev = ggplot(df_stability,
   theme(legend.position = "none",
         strip.text = element_text(face = "bold"))
 
-pdf(here("Calanda_JSDM", "plot", "exp3_species_range_vs_prevalence.pdf"),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", "exp3_species_range_vs_prevalence.pdf"),
     width = 12, height = 8)
 print(p_range_prev)
 dev.off()
@@ -244,7 +247,7 @@ p_scatter = (p_r2 | p_env) / (p_spa | p_codist) +
     )
   )
 
-pdf(here("Calanda_JSDM", "plot", "exp3_species_pairwise_scatter.pdf"),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", "exp3_species_pairwise_scatter.pdf"),
     width = 12, height = 10)
 print(p_scatter)
 dev.off()
@@ -313,7 +316,7 @@ p_combined = p_violin_sd / p_violin_range +
     theme = theme(plot.title = element_text(face = "bold", size = 13))
   )
 
-pdf(here("Calanda_JSDM", "plot", "exp3_stable_vs_unstable_violins.pdf"),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", "exp3_stable_vs_unstable_violins.pdf"),
     width = 12, height = 12)
 print(p_combined)
 dev.off()
@@ -382,7 +385,7 @@ p_cor_bin = ggplot(df_cor_by_bin,
   theme_bw(base_size = 11) +
   theme(legend.position = "bottom")
 
-pdf(here("Calanda_JSDM", "plot", "exp3_correlation_by_prevalence.pdf"),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", "exp3_correlation_by_prevalence.pdf"),
     width = 10, height = 6)
 print(p_cor_bin)
 dev.off()

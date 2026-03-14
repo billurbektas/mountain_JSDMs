@@ -61,7 +61,7 @@ unit_colors = c(
   "Biotic"      = color_codist
 )
 
-dir.create(here("Calanda_JSDM", "plot"), showWarnings = FALSE, recursive = TRUE)
+dir.create(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures"), showWarnings = FALSE, recursive = TRUE)
 
 # ==============================================================================
 # STEP 1: LOAD DATA
@@ -257,7 +257,7 @@ p_anova = ggplot(df_anova_diff, aes(x = dropped, y = diff, fill = metric)) +
     strip.text = element_text(face = "bold")
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp5_anova_diff_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp5_anova_diff_", param_tag, ".pdf")),
     width = 14, height = 7)
 print(p_anova)
 dev.off()
@@ -292,7 +292,7 @@ p_species = ggplot(df_species_diff, aes(x = dropped, y = mean_diff, fill = compo
     legend.position = "bottom"
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp5_species_diff_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp5_species_diff_", param_tag, ".pdf")),
     width = 14, height = 7)
 print(p_species)
 dev.off()
@@ -327,7 +327,7 @@ p_sites = ggplot(df_sites_diff, aes(x = dropped, y = mean_diff, fill = component
     legend.position = "bottom"
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp5_sites_diff_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp5_sites_diff_", param_tag, ".pdf")),
     width = 14, height = 7)
 print(p_sites)
 dev.off()
@@ -367,7 +367,7 @@ p_corr = ggplot(df_corr_long,
     strip.text = element_text(face = "bold")
   )
 
-pdf(here("Calanda_JSDM", "plot", paste0("exp5_correlations_", param_tag, ".pdf")),
+pdf(here("Calanda_JSDM", "plot", "detailed_modeling_experiment_figures", paste0("exp5_correlations_", param_tag, ".pdf")),
     width = 14, height = 10)
 print(p_corr)
 dev.off()
