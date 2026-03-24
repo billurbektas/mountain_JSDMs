@@ -189,8 +189,8 @@ p1_anova = ggplot(df1_anova,
                   size = 2.5, segment.size = 0.2, show.legend = FALSE) +
   scale_color_manual(values = anova_colors) +
   facet_grid(spatial_form ~ alpha_lab) +
-  labs(title = "Experiment 1: Model-level McFadden R\u00B2",
-       x = expression(lambda), y = "McFadden R\u00B2", color = "Component") +
+  labs(title = "Experiment 1: Model-level variance explained",
+       x = expression(lambda), y = "Variance explained", color = "Component") +
   theme_bw(base_size = 10) +
   theme(legend.position = "bottom", strip.text = element_text(face = "bold")) +
   coord_cartesian(clip = "off") +
@@ -236,9 +236,9 @@ p2_anova = ggplot(df2_anova,
                   size = 2.5, segment.size = 0.2, show.legend = FALSE) +
   scale_color_manual(values = anova_colors) +
   facet_grid(alpha_lab ~ vary, labeller = labeller(vary = vary_labels)) +
-  labs(title = "Experiment 2: Model-level McFadden R\u00B2 (decoupled lambda)",
+  labs(title = "Experiment 2: Model-level variance explained (decoupled lambda)",
        subtitle = "Others anchored at lambda = 0.01",
-       x = expression(lambda[varied]), y = "McFadden R\u00B2", color = "Component") +
+       x = expression(lambda[varied]), y = "Variance explained", color = "Component") +
   theme_bw(base_size = 10) +
   theme(legend.position = "bottom", strip.text = element_text(face = "bold")) +
   coord_cartesian(clip = "off") +
@@ -464,6 +464,25 @@ df_drop = bind_rows(drop_list) %>%
                names_to = "component", values_to = "diff") %>%
   mutate(component = factor(component, levels = names(unit_colors)))
 
+# Map raw predictor names to full display names
+predictor_labels = c(
+  "summer_temp"    = "Summer Temperature",
+  "fdd"            = "Freezing Degree Days",
+  "et.annual"      = "Annual Evapotranspiration",
+  "slope"          = "Slope",
+  "rocks_cover"    = "Rock Cover",
+  "trees_cover"    = "Tree Cover",
+  "shrubs_cover"   = "Shrub Cover",
+  "soil_depth_var" = "Soil Depth Variability",
+  "tpi"            = "Topographic Position Index",
+  "flowdir"        = "Flow Direction",
+  "nutrient"       = "Nutrient Index",
+  "disturbance"    = "Disturbance Index"
+)
+df_drop = df_drop %>%
+  mutate(predictor = ifelse(predictor %in% names(predictor_labels),
+                            predictor_labels[predictor], predictor))
+
 # Order predictors by Overall diff
 pred_order = df_drop %>%
   filter(component == "Overall") %>%
@@ -475,11 +494,11 @@ p5 = ggplot(df_drop, aes(x = predictor, y = diff, fill = component)) +
   geom_col(position = position_dodge(width = 0.7), width = 0.6, alpha = 0.8) +
   geom_hline(yintercept = 0, linewidth = 0.3, color = "grey40") +
   scale_fill_manual(values = unit_colors) +
-  labs(title = "Experiment 5: Drop-one predictor — change in McFadden R\u00B2",
+  labs(title = "Experiment 5: Drop-one predictor - change in variance explained",
        subtitle = sprintf("Base R\u00B2 = %.4f | %s", base_r2["Full"],
                           sprintf("alpha = %s, lambda = %s, lambda_env = %s",
                                   base_run$alpha, base_run$lambda, base_run$lambda_env)),
-       x = "Dropped predictor", y = expression(Delta ~ "McFadden" ~ R^2), fill = "Component") +
+       x = "Dropped predictor", y = expression(Delta ~ "Variance explained"), fill = "Component") +
   theme_bw(base_size = 11) +
   theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, hjust = 1))
 
@@ -612,9 +631,10 @@ df_sp_ci = df_sp_per_species %>%
   ) %>%
   mutate(species_name = sp_names[species_idx])
 
-# Join AUC per species
-sp_auc = tibble(species_idx = seq_len(n_species), auc = species_cv$test_auc)
-df_sp_ci = df_sp_ci %>% left_join(sp_auc, by = "species_idx")
+# Join AUC per species (by name, not position — CSV order differs from Y columns)
+sp_auc = tibble(species_idx = seq_len(n_species), species_name = sp_names) %>%
+  left_join(species_cv %>% select(species, test_auc), by = c("species_name" = "species"))
+df_sp_ci = df_sp_ci %>% left_join(sp_auc %>% select(species_idx, auc = test_auc), by = "species_idx")
 
 df_sp_ci = df_sp_ci %>%
   group_by(component) %>%
@@ -637,7 +657,7 @@ p6_sp_ranked = ggplot(df_sp_ci, aes(x = rank, y = mean_val, color = auc)) +
   labs(title = "Experiment 6: Per-species VP values (mean \u00B1 95% CI across folds)",
        subtitle = paste0(sprintf("Black = AUC < 0.7 (%d species) | Colored = AUC >= 0.7 (%d species)\n",
                                   n_low_auc, n_ok_auc), hp_subtitle_6),
-       x = "Species (ranked)", y = "VP value") +
+       x = "Species (ranked)", y = "Variance explained") +
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 
@@ -656,7 +676,7 @@ for (fi in seq_along(fold_data_list)) {
                         spa = "Spatial", codist = "Biotic")
     si_per_site_list = c(si_per_site_list, list(tibble(
       fold = fd$fold, component = comp_label,
-      site_idx = seq_len(nrow(si)), value = si[, col]
+      site_idx = fd$train_idx, value = si[, col]
     )))
   }
 }
@@ -673,9 +693,11 @@ df_si_ci = df_si_per_site %>%
     .groups  = "drop"
   )
 
-# Join logloss per site
-si_ll = tibble(site_idx = seq_len(n_sites), logloss = site_cv$logloss)
-df_si_ci = df_si_ci %>% left_join(si_ll, by = "site_idx")
+# Join logloss per site (by name, not position — CSV order differs from X rows)
+site_names = rownames(data_calanda$X)
+si_ll = tibble(site_idx = seq_len(n_sites), site_name = site_names) %>%
+  left_join(site_cv %>% select(site, logloss), by = c("site_name" = "site"))
+df_si_ci = df_si_ci %>% left_join(si_ll %>% select(site_idx, logloss), by = "site_idx")
 
 df_si_ci = df_si_ci %>%
   group_by(component) %>%
@@ -698,7 +720,7 @@ p6_si_ranked = ggplot(df_si_ci, aes(x = rank, y = mean_val, color = logloss)) +
   labs(title = "Experiment 6: Per-site VP values (mean \u00B1 95% CI across folds)",
        subtitle = paste0(sprintf("Black = log-loss > log(2) (%d sites) | Colored = log-loss <= log(2) (%d sites)\n",
                                   n_high_ll, n_ok_ll), hp_subtitle_6),
-       x = "Site (ranked)", y = "VP value") +
+       x = "Site (ranked)", y = "Variance explained") +
   theme_bw(base_size = 10) +
   theme(strip.text = element_text(face = "bold"))
 

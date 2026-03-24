@@ -1,5 +1,8 @@
 # ==============================================================================
 # Script: 02_prepare_field_trait_data.R
+# Author: Billur Bektas
+# Claude (Anthropic) was used to assist with code refactoring, validation, and documentation.
+#
 # Purpose: Process field-collected trait measurements into clean individual-level
 #          data for merging with TRY traits in step 03.
 #

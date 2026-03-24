@@ -1,5 +1,8 @@
 # ==============================================================================
 # Script: 03_merge_and_assess_traits.R
+# Author: Billur Bektas
+# Claude (Anthropic) was used to assist with code refactoring, validation, and documentation.
+#
 # Purpose: Merge TRY and field trait data, calculate species-level medians and
 #          kCV, and assess trait coverage per community and bias in variance
 #          components.
@@ -88,7 +91,7 @@ continuous_traits = c("vegetative_height", "LNC", "LCC", "LDMC", "LMA", "seed_ma
 # Target units for merged traits
 target_units = tibble(
   trait = c("vegetative_height", "LMA", "LA", "LDMC", "LNC", "LCC", "seed_mass"),
-  unit = c("cm", "g/m2", "mm2", "mg/g", "mg/g", "mg/g", "ug")
+  unit = c("cm", "g/m2", "cm2", "mg/g", "mg/g", "mg/g", "ug")
 )
 
 cat("\n=== Target units for merged traits ===\n")
@@ -137,12 +140,15 @@ try_long = try_long %>%
     # vegetative_height: m -> cm
     value = ifelse(trait == "vegetative_height", value * 100, value),
     # seed_mass: mg -> ug
-    value = ifelse(trait == "seed_mass", value * 1000, value)
+    value = ifelse(trait == "seed_mass", value * 1000, value),
+    #LA: mm2 -> cm2
+    value = ifelse(trait == "LA", value/100, value)
   )
 cat(sprintf("Converted %d TRY SLA observations to LMA (1/SLA * 1000, mm2/mg -> g/m2)\n", n_sla))
 cat(sprintf("Converted %d TRY LDMC observations from g/g to mg/g (* 1000)\n", n_ldmc))
 cat("Converted TRY vegetative_height from m to cm (* 100)\n")
 cat("Converted TRY seed_mass from mg to ug (* 1000)\n")
+cat("Converted TRY LA from mm2 to cm2 (/100)\n")
 
 cat("TRY traits standardized:", n_distinct(try_long$trait), "traits\n")
 
@@ -744,17 +750,7 @@ cat("Saved kCV imputation flags to output/traits_kcv_imputation_flags.csv\n")
 # ==============================================================================
 cat("\n=== PCA on species-level trait medians ===\n")
 
-# Helper: abbreviate species name to 4+4 format (e.g., "Agrostis capillaris" -> "AgroCapi")
-abbrev_species = function(x) {
-  parts = str_split(x, "\\s+")
-  sapply(parts, function(p) {
-    if (length(p) >= 2) {
-      paste0(str_to_title(str_sub(p[1], 1, 4)), str_to_title(str_sub(p[2], 1, 4)))
-    } else {
-      str_sub(p[1], 1, 8)
-    }
-  })
-}
+# abbrev_species is defined in functions_calanda.R
 
 # Build wide matrix of trait means from imputed data (exclude indicators)
 pca_means_data = means_imputed %>%

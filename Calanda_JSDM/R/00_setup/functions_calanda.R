@@ -1,10 +1,14 @@
 # ==============================================================================
 # functions_calanda.R
+# Author: Billur Bektas
+# Claude (Anthropic) was used to assist with code refactoring, validation, and documentation.
+#
 # Helper functions for the Calanda JSDM project
 #
 # Sections:
 #   1. DATA PROCESSING: Snow, temperature, mowing, imputation
-#   2. PLOTTING: Ternary plots, Venn diagram, labeling helpers
+#   2. PLOTTING: Venn diagram, labeling helpers
+#   3. ANALYSIS PLOTTING FUNCTIONS: VP scatter, partial effects, paired plots
 # ==============================================================================
 
 
@@ -808,39 +812,6 @@ calculate_temp_metrics = function(data) {
 }
 
 
-#' Replace NA values with data from the geographically closest site
-#'
-#' For sites missing et_annual, finds the nearest site with valid data
-#' and copies its value.
-#'
-#' @param data Data frame with Longitude, Latitude, and et_annual columns
-#' @return Data frame with NAs filled from nearest neighbour
-replace_with_closest_site_data = function(data) {
-  filled_data = data
-
-  na_rows = which(is.na(data$et_annual))
-
-  if (length(na_rows) > 0) {
-    all_sites = data %>%
-      filter(!is.na(et_annual)) %>%
-      st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
-
-    for (i in na_rows) {
-      target_site = data[i, ] %>%
-        st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
-
-      distances = st_distance(target_site, all_sites)
-
-      closest_idx = which.min(distances)
-
-      filled_data$et_annual[i] = all_sites$et_annual[closest_idx]
-    }
-  }
-
-  return(filled_data)
-}
-
-
 #' Impute missing environmental data using miceRanger
 #'
 #' Performs multiple imputation with random forests, including spatial features
@@ -1111,95 +1082,6 @@ impute_functional_traits = function(
 }
 
 
-#' Extract mowing events from grassland-use intensity rasters
-#'
-#' Loads multi-year grassland-use rasters, extracts the mowingEvents layer,
-#' and optionally extracts values at vegetation plot coordinates.
-#'
-#' @param raster_pattern Regex pattern to match raster filenames
-#' @param coords_path Path to CSV with coordinates (x, y columns in WGS84)
-#' @param output_path Path for output CSV
-#' @param raster_dir Directory containing raster files
-#' @param processed_raster_path Path to save/load processed raster stack
-#' @param force_reprocess If TRUE, reprocess even if output exists
-#' @return Data frame with extracted values, or SpatRaster if no coords provided
-extract_mowing_events = function(raster_pattern = "grassland-use_intensity_.*\\.tif$",
-                                 coords_path = NULL,
-                                 output_path = "mowing_events_at_veg_points.csv",
-                                 raster_dir = ".",
-                                 processed_raster_path = "processed_mowing_events.tif",
-                                 force_reprocess = FALSE) {
-
-  library(tidyverse)
-  library(terra)
-
-  if (file.exists(processed_raster_path) && !force_reprocess) {
-    message("Using existing processed raster from: ", processed_raster_path)
-    mowing_events_stack = rast(processed_raster_path)
-  } else {
-    raster_files = list.files(path = raster_dir,
-                              pattern = raster_pattern,
-                              full.names = TRUE)
-
-    if (length(raster_files) == 0) {
-      stop("No raster files found matching the pattern")
-    }
-
-    mowing_events_list = list()
-
-    for (i in seq_along(raster_files)) {
-      r = rast(raster_files[i])
-
-      if ("mowingEvents" %in% names(r)) {
-        mowing_layer = r[["mowingEvents"]]
-
-        year = str_extract(raster_files[i], "\\d{4}")
-        names(mowing_layer) = paste0("mowingEvents_", year)
-
-        mowing_events_list[[i]] = mowing_layer
-      } else {
-        warning(paste("mowingEvents layer not found in", raster_files[i]))
-      }
-    }
-
-    if (length(mowing_events_list) == 0) {
-      stop("No mowingEvents layers found in any of the raster files")
-    }
-
-    mowing_events_stack = do.call(c, mowing_events_list)
-
-    writeRaster(mowing_events_stack, filename = processed_raster_path, overwrite = TRUE)
-    message("Processed raster saved to: ", processed_raster_path)
-  }
-
-  if (!is.null(coords_path)) {
-    veg_coords = read_csv(coords_path)
-
-    veg_vector = vect(veg_coords, geom = c("x", "y"), crs = "EPSG:4326")
-
-    if (crs(veg_vector) != crs(mowing_events_stack)) {
-      veg_vector = project(veg_vector, crs(mowing_events_stack))
-    }
-
-    extracted_values = extract(mowing_events_stack, veg_vector)
-
-    result = bind_cols(
-      veg_coords,
-      extracted_values %>%
-        select(-ID)
-    )
-
-    if (!is.null(output_path)) {
-      write_csv(result, output_path)
-    }
-
-    return(result)
-  } else {
-    return(mowing_events_stack)
-  }
-}
-
-
 #' Calculate community-weighted mean traits
 #'
 #' Joins a community matrix (sites x species) with species trait data and
@@ -1295,368 +1177,153 @@ calculate_community_traits = function(community_data, traits_data, species_col =
 }
 
 
+#' Calculate unweighted community trait means and variances
+#'
+#' Joins a community matrix with species trait data and calculates
+#' unweighted (equal weight per species) mean and variance per site.
+#' Optionally log-transforms specified trait columns before computing.
+#'
+#' @param community_data Matrix or data frame of sites x species (presence/absence or abundance)
+#' @param traits_data Data frame of species traits
+#' @param species_col Column name for species in traits_data
+#' @param trait_cols Character vector of trait column names
+#' @param log_traits Character vector of trait column names to log-transform (default NULL)
+#' @return Data frame with unweighted mean and variance traits per site
+calculate_community_traits_unweighted = function(community_data, traits_data,
+                                                  species_col = "species",
+                                                  trait_cols, log_traits = NULL) {
+  site_ids = rownames(community_data)
+  comm_long = as_tibble(community_data) %>%
+    mutate(plot_id_releve = site_ids, .before = 1) %>%
+    pivot_longer(-plot_id_releve, names_to = "species", values_to = "value") %>%
+    filter(value > 0)
+
+  traits_tmp = as_tibble(traits_data)
+  if ("...1" %in% colnames(traits_tmp)) traits_tmp = traits_tmp %>% select(-`...1`)
+
+  if (!is.null(log_traits)) {
+    traits_tmp = traits_tmp %>%
+      mutate(across(all_of(log_traits), ~ log(.x)))
+  }
+
+  comm_traits = comm_long %>%
+    left_join(traits_tmp, by = c("species" = species_col))
+
+  comm_mean = comm_traits %>%
+    group_by(plot_id_releve) %>%
+    summarise(
+      species_richness = n(),
+      across(all_of(trait_cols),
+             list(mean = ~ mean(.x, na.rm = TRUE)),
+             .names = "{.col}_mean")
+    )
+
+  comm_var = comm_traits %>%
+    group_by(plot_id_releve) %>%
+    summarise(
+      across(all_of(trait_cols),
+             list(var = ~ var(.x, na.rm = TRUE)),
+             .names = "{.col}_var")
+    )
+
+  comm_mean %>% left_join(comm_var, by = "plot_id_releve")
+}
+
+
+#' Calculate per-trait species functional distinctiveness
+#'
+#' For each trait separately: for each site, for each present species,
+#' compute the mean absolute difference to all other co-occurring species.
+#' Then for each species: take the median across all sites where it occurs.
+#'
+#' @param Y Binary site x species matrix (rows = sites, cols = species)
+#' @param traits_data Data frame with species traits
+#' @param species_col Column name for species in traits_data
+#' @param trait_cols Character vector of trait column names to use
+#' @param log_traits Character vector of trait columns to log-transform (default NULL)
+#' @return Tibble with species and one distinctiveness column per trait
+calculate_functional_distinctiveness = function(Y, traits_data, species_col = "species",
+                                                trait_cols, log_traits = NULL) {
+  traits_tmp = as_tibble(traits_data)
+  if ("...1" %in% colnames(traits_tmp)) traits_tmp = traits_tmp %>% select(-`...1`)
+
+  # Log-transform specified traits
+  if (!is.null(log_traits)) {
+    traits_tmp = traits_tmp %>%
+      mutate(across(all_of(log_traits), ~ log(.x)))
+  }
+
+  # Build trait matrix aligned with Y columns
+  sp_names = colnames(Y)
+  trait_mat = traits_tmp %>%
+    filter(.data[[species_col]] %in% sp_names) %>%
+    arrange(match(.data[[species_col]], sp_names))
+
+  trait_vals = as.matrix(trait_mat[, trait_cols])
+  rownames(trait_vals) = trait_mat[[species_col]]
+  complete = complete.cases(trait_vals)
+  trait_vals = trait_vals[complete, , drop = FALSE]
+  valid_sp = rownames(trait_vals)
+
+  cat(sprintf("  %d / %d species with complete trait data\n",
+              length(valid_sp), length(sp_names)))
+
+  # For each trait, compute per-species median distinctiveness
+  all_results = tibble(species = valid_sp)
+
+  for (tr in trait_cols) {
+    tr_vec = trait_vals[, tr]
+
+    site_distinct = list()
+    for (i in seq_len(nrow(Y))) {
+      present = sp_names[Y[i, ] == 1]
+      present = intersect(present, valid_sp)
+      if (length(present) < 2) next
+
+      vals = tr_vec[present]
+      for (j in seq_along(present)) {
+        mean_diff = mean(abs(vals[-j] - vals[j]))
+        site_distinct[[length(site_distinct) + 1]] = tibble(
+          species = present[j],
+          diff = mean_diff
+        )
+      }
+    }
+
+    df_tr = bind_rows(site_distinct) %>%
+      group_by(species) %>%
+      summarise(med_distinct = median(diff, na.rm = TRUE), .groups = "drop")
+
+    col_name = paste0("distinct_", gsub("^Median_", "", tr))
+    all_results = all_results %>%
+      left_join(df_tr %>% rename(!!col_name := med_distinct), by = "species")
+
+    cat(sprintf("  %s: done\n", tr))
+  }
+
+  return(all_results)
+}
+
+
 # ==============================================================================
 # 2. PLOTTING FUNCTIONS
 # ==============================================================================
 
-#' Label environmental variables for plotting
+#' Abbreviate a species name to 4+4 format (e.g., "Agrostis capillaris" -> "AgroCapi")
+#' Handles single-word names and lowercase input via str_to_title.
 #'
-#' @param var Character vector of variable names
-#' @return Factor with human-readable labels
-label_env_var = function(var) {
-  factor(case_when(
-    var == "summer_temp" ~ "Summer temperature",
-    var == "fdd" ~ "Freezing degree days",
-    var == "et_annual" ~ "Annual evapotranspiration",
-    var == "land_use" ~ "Land use intensity"
-  ), levels = c("Summer temperature", "Annual evapotranspiration",
-                "Freezing degree days", "Land use intensity"))
-}
-
-#' Abbreviate a species name (first 4 letters of genus + first 4 of epithet)
-#'
-#' @param sp_name Full species name (e.g. "Ranunculus acris")
-#' @return Abbreviated name (e.g. "RanuAcri")
-abbrev_species = function(sp_name) {
-  paste0(substring(word(sp_name, 1), 1, 4), toupper(substring(word(sp_name, 2), 1, 1)), substring(word(sp_name, 2), 2, 4))
-}
-
-
-#' Convert degrees to radians
-deg2rad = function(deg) {
-  return(deg * pi / 180)
-}
-
-
-#' Convert ternary coordinates to Cartesian
-get_coords = function(X) {
-  x_w = X[1] + sin(deg2rad(30)) * X[2]
-  y_w = cos(deg2rad(30)) * X[2]
-  return(c(x_w, y_w))
-}
-
-
-#' Species ternary plot (ggplot2) colored by mean altitude
-#'
-#' Creates a ternary plot of species-level variance components (environment,
-#' species associations, space) with points colored by mean altitude and
-#' labels for corner and center species.
-#'
-#' @param res JSDM results object (from sjSDM anova)
-#' @param veg Vegetation data frame with plot_id_releve, species, species_cover
-#' @param veg_clim Environmental data with plot_id_releve and altitude
-#' @param color_env Color for environment axis
-#' @param color_codist Color for species associations axis
-#' @param color_spa Color for spatial axis
-#' @param color_palette Color palette function (default gray gradient)
-#' @param alpha Point transparency
-#' @param cex Point size multiplier
-#' @return ggplot object
-plot_tern_species = function(res, veg, veg_clim,
-                             color_env = "#81caf3",
-                             color_codist = "#00bd89",
-                             color_spa = "#d00000",
-                             color_palette = NULL,
-                             alpha = 0.7,
-                             cex = 1.5) {
-
-  species_altitude_ranges = veg_clim %>%
-    select(plot_id_releve, altitude) %>%
-    distinct() %>%
-    left_join(
-      veg %>% select(plot_id_releve, species, species_cover),
-      by = "plot_id_releve"
-    ) %>%
-    filter(species_cover > 0) %>%
-    group_by(species) %>%
-    summarize(
-      min_altitude = min(altitude, na.rm = TRUE),
-      max_altitude = max(altitude, na.rm = TRUE),
-      altitude_range = max_altitude - min_altitude,
-      mean_altitude = mean(altitude, na.rm = TRUE),
-      .groups = "drop"
-    )
-
-  species_data = res$internals$Species %>%
-    rownames_to_column("species") %>%
-    left_join(species_altitude_ranges, by = "species") %>%
-    filter(!is.na(altitude_range))
-
-  species_data = species_data %>%
-    mutate(
-      total = env + codist + spa,
-      env_prop = env / total,
-      codist_prop = codist / total,
-      spa_prop = spa / total
-    )
-
-  species_data$x = NA
-  species_data$y = NA
-  for (i in 1:nrow(species_data)) {
-    total = species_data$env[i] + species_data$codist[i] + species_data$spa[i]
-    env_norm = species_data$env[i] / total
-    codist_norm = species_data$codist[i] / total
-    spa_norm = species_data$spa[i] / total
-    coords = get_coords(c(spa_norm, codist_norm, env_norm))
-    species_data$x[i] = coords[1]
-    species_data$y[i] = coords[2]
-  }
-
-  if (is.null(color_palette)) {
-    color_palette = colorRampPalette(c("gray90", "gray20"))
-  }
-
-  species_data$dist_env = sqrt(species_data$x^2 + species_data$y^2)
-  species_data$dist_codist = sqrt((species_data$x - 0.5)^2 + (species_data$y - 0.866)^2)
-  species_data$dist_spa = sqrt((species_data$x - 1)^2 + species_data$y^2)
-
-  corner_species = bind_rows(
-    species_data %>% filter(env_prop > 0.8) %>% arrange(dist_env) %>% head(3),
-    species_data %>% filter(codist_prop > 0.8) %>% arrange(dist_codist) %>% head(3),
-    species_data %>% filter(spa_prop > 0.8) %>% arrange(dist_spa) %>% head(3)
-  ) %>%
-    distinct(species, .keep_all = TRUE)
-
-  center_species = species_data %>%
-    filter(
-      env_prop >= 0.25 & env_prop <= 0.40,
-      codist_prop >= 0.25 & codist_prop <= 0.40,
-      spa_prop >= 0.25 & spa_prop <= 0.40
-    ) %>%
-    mutate(dist_center = sqrt((x - 0.5)^2 + (y - 0.289)^2)) %>%
-    arrange(dist_center) %>%
-    head(3)
-
-  labeled_species = bind_rows(corner_species, center_species) %>%
-    distinct(species, .keep_all = TRUE) %>%
-    mutate(label = abbrev_species(species))
-
-  triangle_edges = data.frame(
-    x_start = c(0, 1, 0.5),
-    y_start = c(0, 0, 0.866),
-    x_end = c(1, 0.5, 0),
-    y_end = c(0, 0.866, 0),
-    edge = c("spa", "codist", "env")
-  )
-
-  grid_lines = data.frame()
-  grid_labels = data.frame()
-
-  for (val in seq(0.2, 0.8, 0.2)) {
-    grid_lines = bind_rows(grid_lines, data.frame(
-      x = c(val / 2, 1 - val / 2),
-      y = c(val * 0.866, val * 0.866),
-      group = paste0("h", val),
-      axis = "codist"
-    ))
-    label_pos = get_coords(c(1 - val, 0.0, val))
-    grid_labels = bind_rows(grid_labels, data.frame(
-      x = label_pos[1],
-      y = label_pos[2] - 0.03,
-      label = as.character(1 - val),
-      angle = 60
-    ))
-
-    grid_lines = bind_rows(grid_lines, data.frame(
-      x = c(val, 0.5 + val / 2),
-      y = c(0, (1 - val) * 0.866),
-      group = paste0("l", val),
-      axis = "spa"
-    ))
-    label_pos = get_coords(c(1 - val, val, 0.0))
-    grid_labels = bind_rows(grid_labels, data.frame(
-      x = label_pos[1] + 0.05,
-      y = label_pos[2],
-      label = as.character(val),
-      angle = 0
-    ))
-
-    grid_lines = bind_rows(grid_lines, data.frame(
-      x = c(1 - val, 0.5 - val / 2),
-      y = c(0, (1 - val) * 0.866),
-      group = paste0("r", val),
-      axis = "env"
-    ))
-    label_pos = get_coords(c(0, val, 1 - val))
-    grid_labels = bind_rows(grid_labels, data.frame(
-      x = label_pos[1] - 0.03,
-      y = label_pos[2] + 0.03,
-      label = as.character(1 - val),
-      angle = -50
-    ))
-  }
-
-  p = ggplot() +
-    geom_segment(data = triangle_edges,
-                 aes(x = x_start, y = y_start, xend = x_end, yend = y_end, color = edge),
-                 linewidth = 1.2) +
-    scale_color_manual(values = c("env" = color_env, "codist" = color_codist, "spa" = color_spa),
-                       guide = "none") +
-    geom_line(data = grid_lines, aes(x = x, y = y, group = group, color = axis),
-              linewidth = 0.5, alpha = 0.3) +
-    geom_text(data = grid_labels, aes(x = x, y = y, label = label, angle = angle),
-              size = 5, color = "gray30") +
-    geom_point(data = species_data, aes(x = x, y = y, fill = mean_altitude),
-               shape = 21, size = cex * 2, alpha = alpha, color = "black", stroke = 0.2) +
-    geom_text_repel(data = labeled_species, aes(x = x, y = y, label = label),
-                    size = 4, fontface = "italic",
-                    force = 10,
-                    min.segment.length = 0.01,
-                    segment.color = "gray50") +
-    scale_fill_gradientn(colors = color_palette(100),
-                         name = "Mean\naltitude (m)",
-                         guide = guide_colorbar(barwidth = 0.8, barheight = 8)) +
-    annotate("text", x = 0, y = 0, label = "Environment",
-             color = color_env, fontface = "bold", hjust = 1.2, size = 4.5) +
-    annotate("text", x = 0.5, y = 0.95, label = "Species associations",
-             color = color_codist, fontface = "bold", hjust = 1, size = 4.5) +
-    annotate("text", x = 1, y = 0.01, label = "Space",
-             color = color_spa, fontface = "bold", hjust = -0.6, size = 4.5) +
-    ggtitle("Species") +
-    coord_fixed(clip = "off") +
-    theme_void() +
-    theme(
-      plot.title = element_text(hjust = -0.1, face = "bold", size = 12),
-      legend.position = "right",
-      plot.margin = margin(20, 10, 30, 40)
-    )
-
-  return(p)
-}
-
-
-#' Sites ternary plot (ggplot2) colored by altitude
-#'
-#' Creates a ternary plot of site-level variance components (environment,
-#' species associations, space) with points colored by altitude.
-#'
-#' @param res JSDM results object (from sjSDM anova)
-#' @param veg_clim Environmental data with plot_id_releve and altitude
-#' @param color_env Color for environment axis
-#' @param color_codist Color for species associations axis
-#' @param color_spa Color for spatial axis
-#' @param color_palette Color palette function (default gray gradient)
-#' @param alpha Point transparency
-#' @param cex Point size multiplier
-#' @return ggplot object
-plot_tern_sites = function(res, veg_clim,
-                           color_env = "#81caf3",
-                           color_codist = "#00bd89",
-                           color_spa = "#d00000",
-                           color_palette = NULL,
-                           alpha = 0.7,
-                           cex = 1.5) {
-
-  library(ggplot2)
-
-  sites_data = res$internals$Sites %>%
-    rownames_to_column("plot_id_releve") %>%
-    left_join(veg_clim %>% select(plot_id_releve, altitude) %>% distinct(),
-              by = "plot_id_releve") %>%
-    filter(!is.na(altitude))
-
-  sites_data$x = NA
-  sites_data$y = NA
-  for (i in 1:nrow(sites_data)) {
-    total = sites_data$env[i] + sites_data$codist[i] + sites_data$spa[i]
-    env_norm = sites_data$env[i] / total
-    codist_norm = sites_data$codist[i] / total
-    spa_norm = sites_data$spa[i] / total
-    coords = get_coords(c(spa_norm, codist_norm, env_norm))
-    sites_data$x[i] = coords[1]
-    sites_data$y[i] = coords[2]
-  }
-
-  if (is.null(color_palette)) {
-    color_palette = colorRampPalette(c("gray90", "gray20"))
-  }
-
-  triangle_edges = data.frame(
-    x_start = c(0, 1, 0.5),
-    y_start = c(0, 0, 0.866),
-    x_end = c(1, 0.5, 0),
-    y_end = c(0, 0.866, 0),
-    edge = c("spa", "codist", "env")
-  )
-
-  grid_lines = data.frame()
-  grid_labels = data.frame()
-
-  for (val in seq(0.2, 0.8, 0.2)) {
-    grid_lines = bind_rows(grid_lines, data.frame(
-      x = c(val / 2, 1 - val / 2),
-      y = c(val * 0.866, val * 0.866),
-      group = paste0("h", val),
-      axis = "codist"
-    ))
-    label_pos = get_coords(c(1 - val, 0.0, val))
-    grid_labels = bind_rows(grid_labels, data.frame(
-      x = label_pos[1],
-      y = label_pos[2] - 0.03,
-      label = as.character(1 - val),
-      angle = 60
-    ))
-
-    grid_lines = bind_rows(grid_lines, data.frame(
-      x = c(val, 0.5 + val / 2),
-      y = c(0, (1 - val) * 0.866),
-      group = paste0("l", val),
-      axis = "spa"
-    ))
-    label_pos = get_coords(c(1 - val, val, 0.0))
-    grid_labels = bind_rows(grid_labels, data.frame(
-      x = label_pos[1] + 0.05,
-      y = label_pos[2],
-      label = as.character(val),
-      angle = 0
-    ))
-
-    grid_lines = bind_rows(grid_lines, data.frame(
-      x = c(1 - val, 0.5 - val / 2),
-      y = c(0, (1 - val) * 0.866),
-      group = paste0("r", val),
-      axis = "env"
-    ))
-    label_pos = get_coords(c(0, val, 1 - val))
-    grid_labels = bind_rows(grid_labels, data.frame(
-      x = label_pos[1] - 0.03,
-      y = label_pos[2] + 0.03,
-      label = as.character(1 - val),
-      angle = -50
-    ))
-  }
-
-  p = ggplot() +
-    geom_segment(data = triangle_edges,
-                 aes(x = x_start, y = y_start, xend = x_end, yend = y_end, color = edge),
-                 linewidth = 1.2) +
-    scale_color_manual(values = c("env" = color_env, "codist" = color_codist, "spa" = color_spa),
-                       guide = "none") +
-    geom_line(data = grid_lines, aes(x = x, y = y, group = group, color = axis),
-              linewidth = 0.5, alpha = 0.3) +
-    geom_text(data = grid_labels, aes(x = x, y = y, label = label, angle = angle),
-              size = 5, color = "gray30") +
-    geom_point(data = sites_data, aes(x = x, y = y, fill = altitude),
-               shape = 21, size = cex * 2, alpha = alpha, color = "black", stroke = 0.2) +
-    scale_fill_gradientn(colors = color_palette(100),
-                         name = "Altitude\n(m)",
-                         guide = guide_colorbar(barwidth = 0.8, barheight = 8)) +
-    annotate("text", x = 0, y = 0, label = "Environment",
-             color = color_env, fontface = "bold", hjust = 1.2, size = 4.5) +
-    annotate("text", x = 0.5, y = 0.95, label = "Species associations",
-             color = color_codist, fontface = "bold", hjust = 1, size = 4.5) +
-    annotate("text", x = 1, y = 0.01, label = "Space",
-             color = color_spa, fontface = "bold", hjust = -0.6, size = 4.5) +
-    ggtitle("Sites") +
-    coord_fixed(clip = "off") +
-    theme_void() +
-    theme(
-      plot.title = element_text(hjust = -0.1, face = "bold", size = 12),
-      legend.position = "right",
-      plot.margin = margin(20, 10, 30, 40)
-    )
-
-  return(p)
+#' @param x Character vector of species names
+#' @return Character vector of abbreviated names
+#' @used_by 03_merge_and_assess_traits.R (PCA biplots)
+abbrev_species = function(x) {
+  parts = str_split(x, "\\s+")
+  sapply(parts, function(p) {
+    if (length(p) >= 2) {
+      paste0(str_to_title(str_sub(p[1], 1, 4)), str_to_title(str_sub(p[2], 1, 4)))
+    } else {
+      str_sub(p[1], 1, 8)
+    }
+  })
 }
 
 
@@ -1681,6 +1348,7 @@ plot_anova_custom = function(x,
                              cols = c("#81caf3", "#00bd89", "#d00000"),
                              alpha = 0.15,
                              env_deviance = NULL,
+                             ci_data = NULL,
                              ...) {
   fractions = match.arg(fractions)
   lineSeq = 0.3
@@ -1704,23 +1372,56 @@ plot_anova_custom = function(x,
            Nagelkerke = 5,
            McFadden = 6
     )
+
+  # Helper: format value by model name
+  fmt_val = function(model_name) {
+    row_idx = which(values$models == model_name)
+    if (length(row_idx) == 0) return("")
+    as.character(round(values[row_idx, col_index], 3))
+  }
+
+  # Circle centers — original layout
+  cx_env = lineSeq          # 0.3
+  cy_env = 1 - lineSeq      # 0.7
+  cx_bio = 1 - lineSeq      # 0.7
+  cy_bio = 1 - lineSeq      # 0.7
+  cx_spa = 0.5
+  cy_spa = lineSeq           # 0.3
+  r_circ = 1.1 * lineSeq     # 0.33
+
   graphics::plot(NULL, NULL, xlim = c(0, 1), ylim = c(0, 1), pty = "s", axes = FALSE, xlab = "", ylab = "")
-  xx = 1.1 * lineSeq * cos(seq(0, 2 * pi, length.out = nseg))
-  yy = 1.1 * lineSeq * sin(seq(0, 2 * pi, length.out = nseg))
-  graphics::polygon(xx + lineSeq, yy + (1 - lineSeq), col = add_alpha(cols[1], alpha = alpha), border = "black", lty = 1, lwd = 1)
-  graphics::text(lineSeq - 0.1, (1 - lineSeq), labels = round(values[1, col_index], 3))
-  graphics::text(mean(xx + lineSeq), 0.9, labels = "Environmental", pos = 3)
-  graphics::polygon(xx + 1 - lineSeq, yy + 1 - lineSeq, col = add_alpha(cols[2], alpha = alpha), border = "black", lty = 1, lwd = 1)
-  graphics::text(1 - lineSeq + 0.1, (1 - lineSeq), labels = round(values[2, col_index], 3))
-  graphics::text(1 - mean(xx + lineSeq), 0.9, labels = "Associations", pos = 3)
-  graphics::text(0.5, (1 - lineSeq), labels = round(values[3, col_index], 3))
+  xx = r_circ * cos(seq(0, 2 * pi, length.out = nseg))
+  yy = r_circ * sin(seq(0, 2 * pi, length.out = nseg))
+
+  # Draw circles
+  graphics::polygon(xx + cx_env, yy + cy_env, col = add_alpha(cols[1], alpha = alpha), border = "black", lty = 1, lwd = 1)
+  graphics::polygon(xx + cx_bio, yy + cy_bio, col = add_alpha(cols[2], alpha = alpha), border = "black", lty = 1, lwd = 1)
+  graphics::text(cx_env, cy_env + r_circ - 0.05, labels = "Environment", cex = 1.2)
+  graphics::text(cx_bio, cy_bio + r_circ - 0.05, labels = "Species\nAssociations", cex = 1.2)
+
   if (x$spatial) {
-    graphics::polygon(xx + 0.5, yy + lineSeq, col = add_alpha(cols[3], alpha = alpha), border = "black", lty = 1, lwd = 1)
-    graphics::text(0.5, lineSeq + 0.0, pos = 1, labels = round(values[4, col_index], 3))
-    graphics::text(0.5, 0.1, labels = "Spatial", pos = 1)
-    graphics::text(0.3, 0.5, pos = 1, labels = round(values[5, col_index], 3))
-    graphics::text(1 - 0.3, 0.5, pos = 1, labels = round(values[6, col_index], 3))
-    graphics::text(0.5, 0.5 + 0.05, labels = round(values[7, col_index], 3))
+    graphics::polygon(xx + cx_spa, yy + cy_spa, col = add_alpha(cols[3], alpha = alpha), border = "black", lty = 1, lwd = 1)
+    graphics::text(0.5, 0.07, labels = "Space", pos = 1, cex = 1.2)
+
+    # --- Text positions for each Venn region ---
+    # F_A: Env only — far left
+    graphics::text(cx_env - 0.12, cy_env, labels = fmt_val("F_A"), cex = 1.3, font = 2)
+    # F_B: Assoc only — far right
+    graphics::text(cx_bio + 0.12, cy_bio, labels = fmt_val("F_B"), cex = 1.3, font = 2)
+    # F_AB: Env ∩ Assoc, NOT Space — top center
+    graphics::text(0.5, cy_env + 0.02, labels = fmt_val("F_AB"), cex = 1.2, font = 2)
+    # F_S: Space only — bottom center
+    graphics::text(0.5, cy_spa - 0.02, pos = 1, labels = fmt_val("F_S"), cex = 1.3, font = 2)
+    # F_AS: Env ∩ Space — bottom-left
+    graphics::text(0.3, 0.48, pos = 1, labels = fmt_val("F_AS"), cex = 1.1, font = 2)
+    # F_BS: Assoc ∩ Space — bottom-right
+    graphics::text(0.7, 0.48, pos = 1, labels = fmt_val("F_BS"), cex = 1.1, font = 2)
+    # F_ABS: all three — center
+    graphics::text(0.5, 0.55, labels = fmt_val("F_ABS"), cex = 1.2, font = 2)
+  } else {
+    graphics::text(cx_env - 0.12, cy_env, labels = fmt_val("F_A"), cex = 1.3, font = 2)
+    graphics::text(cx_bio + 0.12, cy_bio, labels = fmt_val("F_B"), cex = 1.3, font = 2)
+    graphics::text(0.5, cy_env, labels = fmt_val("F_AB"), cex = 1.2, font = 2)
   }
   out$VENN = values
   return(invisible(out))
@@ -1736,110 +1437,466 @@ add_alpha = function(col, alpha = 0.25) {
   apply(sapply(col, grDevices::col2rgb) / 255, 2, function(x) grDevices::rgb(x[1], x[2], x[3], alpha = alpha))
 }
 
+
 # ==============================================================================
-# build_ternary — ternary VP plot (kept for future use)
+# 3. ANALYSIS PLOTTING FUNCTIONS
 # ==============================================================================
-#' Build a ternary variance partitioning plot
-#'
-#' @param df Data frame with env, codist, spa columns
-#' @param fill_col Column name for point fill color
-#' @param fill_label Legend label for fill
-#' @param title_text Plot title
-#' @param color_env,color_codist,color_spa Colors for triangle edges
-#' @param label_species If not NULL, label extreme species
-#' @return ggplot object
-build_ternary = function(df, fill_col, fill_label, title_text,
-                         color_env, color_codist, color_spa,
-                         label_species = NULL) {
-  df = df %>% mutate(
-    total = env + codist + spa,
-    env_prop = env / total,
-    codist_prop = codist / total,
-    spa_prop = spa / total
+
+#' VP scatter plot: env vs codist, colored by spa, sized by r2. Used by 08_variance_partitioning.R.
+build_vp_scatter_combined = function(df, label_species = FALSE) {
+  # Pearson correlations
+  cor_eb = cor.test(df$env, df$codist, method = "pearson")
+  cor_es = cor.test(df$env, df$spa, method = "pearson")
+
+  cor_label = paste0(
+    "r(Env, Sp.Assoc.) = ", sprintf("%.2f", cor_eb$estimate),
+    "\nr(Env, Space) = ", sprintf("%.2f", cor_es$estimate)
   )
 
-  coords = t(sapply(seq_len(nrow(df)), function(i) {
-    get_coords(c(df$spa_prop[i], df$codist_prop[i], df$env_prop[i]))
-  }))
-  df$x = coords[, 1]
-  df$y = coords[, 2]
-
-  triangle_edges = data.frame(
-    x_start = c(0, 1, 0.5), y_start = c(0, 0, 0.866),
-    x_end = c(1, 0.5, 0), y_end = c(0, 0.866, 0),
-    edge = c("spa", "codist", "env")
-  )
-  grid_lines = data.frame(); grid_labels = data.frame()
-  for (val in seq(0.2, 0.8, 0.2)) {
-    grid_lines = bind_rows(grid_lines,
-      data.frame(x = c(val/2, 1 - val/2), y = c(val*0.866, val*0.866),
-                 group = paste0("h", val), axis = "codist"),
-      data.frame(x = c(val, 0.5 + val/2), y = c(0, (1 - val)*0.866),
-                 group = paste0("l", val), axis = "spa"),
-      data.frame(x = c(1 - val, 0.5 - val/2), y = c(0, (1 - val)*0.866),
-                 group = paste0("r", val), axis = "env")
+  p = ggplot(df, aes(x = env, y = codist, color = spa, size = r2)) +
+    geom_hline(yintercept = 0, linewidth = 0.3, color = "grey60") +
+    geom_vline(xintercept = 0, linewidth = 0.3, color = "grey60") +
+    geom_abline(slope = 1, intercept = 0, linewidth = 0.3, linetype = "dashed", color = "grey50") +
+    geom_point(alpha = 0.7) +
+    scale_color_gradient(low = "grey85", high = color_spa, name = "Space") +
+    scale_size_continuous(range = c(1, 6), name = "Variance explained") +
+    annotate("text",
+             x = 0.02,
+             y = max(df$codist, na.rm = TRUE),
+             label = cor_label, hjust = 0, vjust = 1, size = 4.5,
+             fontface = "italic") +
+    labs(x = "Environment", y = "Species Associations") +
+    theme_bw(base_size = 18) +
+    theme(
+      axis.title = element_text(size = 18),
+      axis.text = element_text(size = 16),
+      legend.position = "right"
     )
-    lp1 = get_coords(c(1 - val, 0, val))
-    lp2 = get_coords(c(1 - val, val, 0))
-    lp3 = get_coords(c(0, val, 1 - val))
-    grid_labels = bind_rows(grid_labels,
-      data.frame(x = lp1[1], y = lp1[2] - 0.03, label = as.character(1 - val), angle = 60),
-      data.frame(x = lp2[1] + 0.05, y = lp2[2], label = as.character(val), angle = 0),
-      data.frame(x = lp3[1] - 0.03, y = lp3[2] + 0.03, label = as.character(1 - val), angle = -50)
-    )
-  }
 
-  color_palette = colorRampPalette(c("gray90", "gray20"))
-
-  p = ggplot() +
-    geom_segment(data = triangle_edges,
-                 aes(x = x_start, y = y_start, xend = x_end, yend = y_end, color = edge),
-                 linewidth = 1.2) +
-    scale_color_manual(values = c("env" = color_env, "codist" = color_codist, "spa" = color_spa),
-                       guide = "none") +
-    geom_line(data = grid_lines, aes(x = x, y = y, group = group, color = axis),
-              linewidth = 0.5, alpha = 0.3) +
-    geom_text(data = grid_labels, aes(x = x, y = y, label = label, angle = angle),
-              size = 5, color = "gray30") +
-    geom_point(data = df, aes(x = x, y = y, fill = .data[[fill_col]]),
-               shape = 21, size = 3, alpha = 0.7, color = "black", stroke = 0.2) +
-    scale_fill_gradientn(colors = color_palette(100),
-                         name = fill_label,
-                         guide = guide_colorbar(barwidth = 0.8, barheight = 8)) +
-    annotate("text", x = 0, y = 0, label = "Environment",
-             color = color_env, fontface = "bold", hjust = 1.2, size = 4.5) +
-    annotate("text", x = 0.5, y = 0.95, label = "Species associations",
-             color = color_codist, fontface = "bold", hjust = 1, size = 4.5) +
-    annotate("text", x = 1, y = 0.01, label = "Space",
-             color = color_spa, fontface = "bold", hjust = -0.6, size = 4.5) +
-    ggtitle(title_text) +
-    coord_fixed(clip = "off") +
-    theme_void() +
-    theme(plot.title = element_text(hjust = -0.1, face = "bold", size = 12),
-          legend.position = "right",
-          plot.margin = margin(20, 10, 30, 40))
-
-  if (!is.null(label_species) && "species_name" %in% names(df)) {
-    df = df %>% mutate(
-      dist_env = sqrt(x^2 + y^2),
-      dist_codist = sqrt((x - 0.5)^2 + (y - 0.866)^2),
-      dist_spa = sqrt((x - 1)^2 + y^2)
-    )
+  if (label_species && "species_name" %in% names(df)) {
     labeled = bind_rows(
-      df %>% filter(env_prop > 0.8) %>% arrange(dist_env) %>% head(3),
-      df %>% filter(codist_prop > 0.8) %>% arrange(dist_codist) %>% head(3),
-      df %>% filter(spa_prop > 0.8) %>% arrange(dist_spa) %>% head(3),
-      df %>% filter(env_prop >= 0.25 & env_prop <= 0.4,
-                    codist_prop >= 0.25 & codist_prop <= 0.4,
-                    spa_prop >= 0.25 & spa_prop <= 0.4) %>%
-        mutate(dist_center = sqrt((x - 0.5)^2 + (y - 0.289)^2)) %>%
-        arrange(dist_center) %>% head(3)
-    ) %>% distinct(species_name, .keep_all = TRUE) %>%
-      mutate(label = abbrev_species(species_name))
-    p = p + geom_text_repel(data = labeled, aes(x = x, y = y, label = label),
+      df %>% slice_max(env, n = 3),
+      df %>% slice_max(spa, n = 3),
+      df %>% slice_max(codist, n = 3),
+      df %>% slice_min(r2, n = 2),
+      df %>% slice_max(r2, n = 2)
+    ) %>% distinct(species_name, .keep_all = TRUE)
+    p = p + geom_text_repel(data = labeled, aes(label = species_name),
                             size = 3.5, fontface = "italic",
-                            force = 10, min.segment.length = 0.01,
-                            segment.color = "gray50")
+                            max.overlaps = 15, segment.color = "grey50",
+                            show.legend = FALSE)
   }
   p
+}
+
+
+#' Partial effect plot for one env variable across VP components. Used by 09_environmental_gradient_analysis.R.
+build_partial_plot = function(evar, models, df, predictor_cols,
+                               vp_components, vp_labels, comp_colors,
+                               var_full_names, x_label_prefix = "") {
+
+  pred_parts = list()
+  annot_parts = list()
+
+  for (comp in vp_components) {
+    best_mod = models[[comp]]
+    s = summary(best_mod)
+    retained = names(coef(best_mod))[-1]
+
+    relevant = retained[grepl(paste0("^", evar, "$|^I\\(", evar), retained)]
+    if (length(relevant) == 0) {
+      annot_parts[[comp]] = sprintf("%s: not retained", vp_labels[comp])
+      next
+    }
+
+    pred_df = as.data.frame(lapply(predictor_cols, function(v) rep(mean(df[[v]]), 200)))
+    names(pred_df) = predictor_cols
+    pred_df[[evar]] = seq(min(df[[evar]]), max(df[[evar]]), length.out = 200)
+    pred_df$y = predict(best_mod, pred_df)
+    pred_df$component = comp
+
+    coef_info = as.data.frame(s$coefficients) %>%
+      rownames_to_column("term") %>%
+      filter(grepl(paste0("^", evar, "$|^I\\(", evar), term)) %>%
+      mutate(
+        short = ifelse(grepl("\\^2", term), "x\u00B2", "x"),
+        sig = ifelse(`Pr(>|t|)` < 0.001, "***",
+              ifelse(`Pr(>|t|)` < 0.01, "**",
+              ifelse(`Pr(>|t|)` < 0.05, "*", ""))),
+        label = sprintf("%s = %.4f%s", short, Estimate, sig)
+      )
+
+    # Check if any term for this variable is significant (p < 0.05)
+    any_sig = any(coef_info$`Pr(>|t|)` < 0.05)
+    pred_df$line_alpha = ifelse(any_sig, 1.0, 0.2)
+    pred_parts[[comp]] = pred_df
+
+    annot_parts[[comp]] = sprintf("%s: %s",
+                                   vp_labels[comp],
+                                   paste(coef_info$label, collapse = ", "))
+  }
+
+  df_preds = bind_rows(pred_parts)
+
+  # Points in long format
+  df_pts = df %>%
+    select(all_of(paste0(vp_components, "_mean_val")), all_of(evar)) %>%
+    pivot_longer(cols = all_of(paste0(vp_components, "_mean_val")),
+                 names_to = "component", values_to = "value") %>%
+    mutate(component = gsub("_mean_val", "", component))
+
+  annot_text = paste(annot_parts[vp_components], collapse = "\n")
+  full_name = ifelse(evar %in% names(var_full_names), var_full_names[evar], evar)
+  x_lab = if (x_label_prefix != "") paste0(x_label_prefix, full_name) else full_name
+
+  p = ggplot() +
+    geom_point(data = df_pts,
+               aes(x = .data[[evar]], y = value, color = component),
+               size = 0.3, alpha = 0.3)
+
+  if (nrow(df_preds) > 0) {
+    p = p + geom_line(data = df_preds,
+                      aes(x = .data[[evar]], y = y, color = component,
+                          alpha = line_alpha),
+                      linewidth = 1.2) +
+      scale_alpha_identity()
+  }
+
+  p = p +
+    scale_color_manual(values = comp_colors, labels = vp_labels, name = NULL) +
+    annotate("text",
+             x = min(df[[evar]]),
+             y = max(df_pts$value, na.rm = TRUE),
+             label = annot_text,
+             hjust = 0, vjust = 1, size = 4, fontface = "italic") +
+    labs(x = x_lab, y = "Variance explained") +
+    theme_bw(base_size = 12) +
+    theme(axis.title = element_text(size = 17),
+          axis.text = element_text(size = 9),
+          legend.position = "bottom",
+          legend.text = element_text(size = 10))
+
+  return(p)
+}
+
+
+#' Build paired species/community PDF for a set of env variables. Used by 09_environmental_gradient_analysis.R.
+build_combined_pdf = function(vars, filename, pdf_width, pdf_height) {
+
+  sp_plots = list()
+  comm_plots = list()
+
+  for (v in vars) {
+    sp_plots[[v]] = build_partial_plot(
+      evar = v, models = beta_models, df = df_merged,
+      predictor_cols = beta_cols,
+      vp_components = vp_components, vp_labels = vp_labels,
+      comp_colors = comp_colors, var_full_names = var_full_names,
+      x_label_prefix = "Response to "
+    )
+
+    comm_plots[[v]] = build_partial_plot(
+      evar = v, models = community_env_models, df = df_wide,
+      predictor_cols = env_cols,
+      vp_components = vp_components, vp_labels = vp_labels,
+      comp_colors = comp_colors, var_full_names = var_full_names,
+      x_label_prefix = ""
+    )
+  }
+
+  n = length(vars)
+
+  # Column headers via ggtitle on first row only
+  sp_plots[[1]] = sp_plots[[1]] + ggtitle("A) Species") +
+    theme(plot.title = element_text(size = 18, face = "bold", hjust = 0))
+  comm_plots[[1]] = comm_plots[[1]] + ggtitle("B) Community") +
+    theme(plot.title = element_text(size = 18, face = "bold", hjust = 0))
+
+  # Interleave: sp1, comm1, sp2, comm2, ...
+  # Hide legend on all individual panels; add a shared legend via collect
+  paired = list()
+  for (i in seq_along(vars)) {
+    paired[[2 * i - 1]] = sp_plots[[i]] + theme(legend.position = "none")
+    paired[[2 * i]]     = comm_plots[[i]] + theme(legend.position = "none")
+  }
+
+  # Create a standalone legend from a dummy plot with all 3 components
+  legend_plot = ggplot(tibble(x = 1:3, y = 1:3,
+                               component = factor(names(comp_colors), levels = names(comp_colors))),
+                        aes(x = x, y = y, color = component)) +
+    geom_point(size = 3) +
+    scale_color_manual(values = comp_colors, labels = vp_labels, name = NULL) +
+    theme_void() +
+    theme(legend.position = "bottom", legend.text = element_text(size = 12))
+  legend_grob = cowplot::get_legend(legend_plot)
+
+  p_combined = wrap_plots(paired, ncol = 2) +
+    plot_annotation(theme = theme(plot.margin = margin(0, 0, 30, 0)))
+
+  # Combine with legend at bottom
+  p_final = cowplot::plot_grid(p_combined, legend_grob, ncol = 1,
+                                rel_heights = c(1, 0.04))
+
+  pdf(here("Calanda_JSDM", "plot", filename), width = pdf_width, height = pdf_height)
+  print(p_final)
+  dev.off()
+  cat(sprintf("  Saved %s\n", filename))
+}
+
+
+# Global linetype mapping for paired plots
+# Species median & Community mean -> solid
+# Species plasticity & Community variance -> dashed
+# Species distinctiveness -> dotted
+global_ltype_values = c(
+  "Median / Mean"            = "solid",
+  "Plasticity / Variance"    = "dashed",
+  "Distinctiveness"          = "dotted"
+)
+
+#' Paired partial effect plot (two variables overlaid with different linetypes). Used by 10_functional_post_analysis.R.
+build_paired_plot = function(evar1, evar2, label1, label2, trait_name,
+                              models, df, predictor_cols,
+                              vp_components, vp_labels, comp_colors,
+                              ltype1 = "Median / Mean",
+                              ltype2 = "Plasticity / Variance",
+                              evar3 = NULL, label3 = NULL,
+                              ltype3 = "Distinctiveness",
+                              annot_labels = NULL) {
+
+  # Short labels for annotations (default to vp_labels if not provided)
+  if (is.null(annot_labels)) annot_labels = vp_labels
+
+  # Generate partial predictions for one variable (holding others at mean)
+  # Also checks significance: lines for non-significant terms get alpha = 0.2
+  get_preds = function(evar) {
+    pred_parts = list()
+    for (comp in vp_components) {
+      best_mod = models[[comp]]
+      s = summary(best_mod)
+      retained = names(coef(best_mod))[-1]
+      relevant = retained[grepl(paste0("^", evar, "$|^I\\(", evar), retained)]
+      if (length(relevant) == 0) next
+
+      pred_df = as.data.frame(lapply(predictor_cols, function(v) rep(mean(df[[v]]), 200)))
+      names(pred_df) = predictor_cols
+      pred_df[[evar]] = seq(min(df[[evar]]), max(df[[evar]]), length.out = 200)
+      pred_df$y = predict(best_mod, pred_df)
+      pred_df$component = comp
+      pred_df$x_val = pred_df[[evar]]
+
+      # Check if any term for this variable is significant
+      p_vals = as.data.frame(s$coefficients) %>%
+        rownames_to_column("term") %>%
+        filter(grepl(paste0("^", evar, "$|^I\\(", evar), term)) %>%
+        pull(`Pr(>|t|)`)
+      pred_df$line_alpha = ifelse(any(p_vals < 0.05), 1.0, 0.2)
+
+      pred_parts[[comp]] = pred_df
+    }
+    bind_rows(pred_parts)
+  }
+
+  # Annotation text for one variable
+  get_annot = function(evar, label) {
+    annot_parts = list()
+    for (comp in vp_components) {
+      best_mod = models[[comp]]
+      s = summary(best_mod)
+      retained = names(coef(best_mod))[-1]
+      relevant = retained[grepl(paste0("^", evar, "$|^I\\(", evar), retained)]
+      if (length(relevant) == 0) {
+        annot_parts[[comp]] = sprintf("%s: not retained", annot_labels[comp])
+        next
+      }
+      coef_info = as.data.frame(s$coefficients) %>%
+        rownames_to_column("term") %>%
+        filter(grepl(paste0("^", evar, "$|^I\\(", evar), term)) %>%
+        mutate(
+          short = ifelse(grepl("\\^2", term), "x\u00B2", "x"),
+          sig = ifelse(`Pr(>|t|)` < 0.001, "***",
+                ifelse(`Pr(>|t|)` < 0.01, "**",
+                ifelse(`Pr(>|t|)` < 0.05, "*", ""))),
+          lbl = sprintf("%s = %.4f%s", short, Estimate, sig)
+        )
+      annot_parts[[comp]] = sprintf("%s: %s", annot_labels[comp],
+                                     paste(coef_info$lbl, collapse = ", "))
+    }
+    paste0(label, ": ", paste(annot_parts[vp_components], collapse = "; "))
+  }
+
+  preds1 = get_preds(evar1)
+  preds2 = get_preds(evar2)
+
+  annot1 = get_annot(evar1, label1)
+  annot2 = get_annot(evar2, label2)
+  annot_lines = c(annot1, annot2)
+
+  if (nrow(preds1) > 0) preds1$ltype = ltype1
+  if (nrow(preds2) > 0) preds2$ltype = ltype2
+
+  # Optional third variable
+  preds3_df = NULL
+  if (!is.null(evar3) && !is.null(label3)) {
+    preds3 = get_preds(evar3)
+    annot3 = get_annot(evar3, label3)
+    annot_lines = c(annot_lines, annot3)
+    if (nrow(preds3) > 0) {
+      preds3$ltype = ltype3
+      preds3_df = preds3 %>% select(x_val, y, component, ltype, line_alpha)
+    }
+  }
+
+  annot_text = paste(annot_lines, collapse = "\n")
+
+  df_all_preds = bind_rows(
+    if (nrow(preds1) > 0) preds1 %>% select(x_val, y, component, ltype, line_alpha) else NULL,
+    if (nrow(preds2) > 0) preds2 %>% select(x_val, y, component, ltype, line_alpha) else NULL,
+    preds3_df
+  )
+
+  # Points: VP values vs evar1 (the primary measure: median or mean)
+  df_pts = df %>%
+    select(all_of(paste0(vp_components, "_mean_val")), all_of(evar1)) %>%
+    pivot_longer(cols = all_of(paste0(vp_components, "_mean_val")),
+                 names_to = "component", values_to = "value") %>%
+    mutate(component = gsub("_mean_val", "", component))
+
+  # y range for annotation
+  y_max = max(c(if (nrow(df_all_preds) > 0) df_all_preds$y else NULL,
+                df_pts$value),
+              na.rm = TRUE)
+  x_min = min(df[[evar1]], df[[evar2]])
+
+  # Invisible dummy rows to ensure all linetype levels appear in legend
+  dummy_ltypes = tibble(
+    x_val = NA_real_, y = NA_real_, component = vp_components[1],
+    ltype = names(global_ltype_values)
+  )
+
+  p = ggplot() +
+    geom_point(data = df_pts,
+               aes(x = .data[[evar1]], y = value, color = component),
+               size = 0.3, alpha = 0.3)
+
+  if (nrow(df_all_preds) > 0) {
+    p = p + geom_line(data = df_all_preds,
+                      aes(x = x_val, y = y, color = component, linetype = ltype,
+                          alpha = line_alpha),
+                      linewidth = 1.2) +
+      scale_alpha_identity()
+  }
+
+  p = p +
+    geom_line(data = dummy_ltypes,
+              aes(x = x_val, y = y, linetype = ltype),
+              na.rm = TRUE, show.legend = TRUE) +
+    scale_color_manual(values = comp_colors, labels = vp_labels, name = NULL) +
+    scale_linetype_manual(values = global_ltype_values, name = NULL,
+                          drop = FALSE,
+                          guide = guide_legend(keywidth = unit(1.8, "cm"))) +
+    annotate("text", x = x_min, y = y_max,
+             label = annot_text,
+             hjust = 0, vjust = 1, size = 3.3, fontface = "italic") +
+    labs(x = trait_name, y = "Variance explained") +
+    theme_bw(base_size = 12) +
+    theme(axis.title = element_text(size = 17),
+          axis.text = element_text(size = 9),
+          legend.text = element_text(size = 10),
+          legend.key.height = unit(0.7, "cm"))
+
+  return(p)
+}
+
+
+# ==============================================================================
+# 4. MODEL SUMMARY FUNCTIONS
+# ==============================================================================
+
+#' Extract stepwise AIC model results as tidy data frames
+#'
+#' Given a full lm model and its stepwise-selected best model, extracts:
+#'   1. Coefficient table (estimates, SE, t, p, significance stars)
+#'   2. BIC step history (which terms were dropped and BIC at each step)
+#'   3. Model-level summary (adj R2, F-stat, p, df, AIC, BIC, n)
+#'
+#' @param full_mod The full lm model before stepwise selection
+#' @param best_mod The final lm model after backward stepwise BIC/AIC
+#' @param analysis_label Character label for the analysis (e.g., "env_gradient_community")
+#' @param component_label Character label for the VP component (e.g., "env", "codist", "spa")
+#' @param k_penalty Penalty per parameter for stepwise (default log(n) for BIC; use 2 for AIC)
+#' @return List with $coefficients, $bic_steps, $model_summary (all tibbles)
+#' @used_by 09_environmental_gradient_analysis.R, 10_functional_post_analysis.R
+extract_model_results = function(full_mod, best_mod, analysis_label, component_label,
+                                  k_penalty = NULL) {
+
+  if (is.null(k_penalty)) k_penalty = 2  # AIC by default
+
+  s = summary(best_mod)
+
+  # 1. Coefficient table
+  coef_tbl = as.data.frame(s$coefficients) %>%
+    rownames_to_column("term") %>%
+    as_tibble() %>%
+    rename(estimate = Estimate, std_error = `Std. Error`,
+           t_value = `t value`, p_value = `Pr(>|t|)`) %>%
+    mutate(
+      sig = case_when(
+        p_value < 0.001 ~ "***",
+        p_value < 0.01  ~ "**",
+        p_value < 0.05  ~ "*",
+        p_value < 0.1   ~ ".",
+        TRUE            ~ ""
+      ),
+      analysis = analysis_label,
+      component = component_label
+    ) %>%
+    select(analysis, component, term, estimate, std_error, t_value, p_value, sig)
+
+  # 2. BIC/AIC step history — re-run step with trace to capture steps
+  step_log = capture.output(step(full_mod, direction = "backward", trace = 1, k = k_penalty))
+  # Parse step lines: "- <term>   <df>  <sum_sq>  <BIC>"
+  step_lines = step_log[grepl("^- ", step_log)]
+  if (length(step_lines) > 0) {
+    bic_steps = tibble(raw = step_lines) %>%
+      mutate(
+        term_dropped = str_trim(str_extract(raw, "(?<=^- )\\S.*?(?=\\s+\\d)")),
+        bic = as.numeric(str_extract(raw, "[\\-\\.0-9]+$"))
+      ) %>%
+      mutate(
+        step = seq_len(n()),
+        analysis = analysis_label,
+        component = component_label
+      ) %>%
+      select(analysis, component, step, term_dropped, bic)
+  } else {
+    bic_steps = tibble(
+      analysis = character(), component = character(),
+      step = integer(), term_dropped = character(), bic = numeric()
+    )
+  }
+
+  # 3. Model-level summary
+  f_stat = s$fstatistic
+  model_p = if (!is.null(f_stat)) pf(f_stat[1], f_stat[2], f_stat[3], lower.tail = FALSE) else NA
+  model_summary = tibble(
+    analysis = analysis_label,
+    component = component_label,
+    n_obs = nobs(best_mod),
+    n_terms_full = length(coef(full_mod)) - 1,
+    n_terms_final = length(coef(best_mod)) - 1,
+    r_squared = s$r.squared,
+    adj_r_squared = s$adj.r.squared,
+    f_statistic = if (!is.null(f_stat)) f_stat[1] else NA,
+    df_model = if (!is.null(f_stat)) f_stat[2] else NA,
+    df_residual = if (!is.null(f_stat)) f_stat[3] else NA,
+    model_p_value = model_p,
+    aic_full = AIC(full_mod),
+    aic_final = AIC(best_mod),
+    bic_full = BIC(full_mod),
+    bic_final = BIC(best_mod),
+    bic_drop = BIC(full_mod) - BIC(best_mod)
+  )
+
+  list(coefficients = coef_tbl, bic_steps = bic_steps, model_summary = model_summary)
 }

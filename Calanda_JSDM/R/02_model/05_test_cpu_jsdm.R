@@ -1,17 +1,20 @@
 # ==============================================================================
-# Script: 02_jsdm.R
-# Purpose: Fit spatial Joint Species Distribution Model using sjSDM (GPU)
+# Script: 05_test_cpu_jsdm.R
+# Author: Billur Bektas
+# Claude (Anthropic) was used to assist with code refactoring, validation, and documentation.
+#
+# Purpose: Local CPU test of the sjSDM model structure (low iterations).
+#          Verifies model specification before running full experiments on Colab GPU.
+#          Not used for production results.
 #
 # Inputs:
-#   - output/data_calanda_jsdm.rds (X and Y matrices from 01_prepare_data.R)
+#   - output/data_calanda_jsdm_<date>.rds (X and Y matrices from 04_prepare)
 #
 # Outputs:
-#   - output/model_sjsdm_calanda.rds
-#   - output/R2_sjsdm_calanda.rds
-#   - output/an_sjsdm_calanda.rds
-#   - output/res_sjsdm_calanda.rds
+#   - None (test only; full model fitting runs on Google Colab)
 #
-# Note: Requires GPU. Authoritative results are in results_from_Max/.
+# Note: Full model fitting + experiments run via Colab notebook:
+#       R/02_model/06_sjsdm_experiments_colab.ipynb
 # ==============================================================================
 
 library(sjSDM)

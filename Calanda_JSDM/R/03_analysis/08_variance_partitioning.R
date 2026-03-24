@@ -1,5 +1,8 @@
 # ==============================================================================
 # Script: 08_variance_partitioning.R
+# Author: Billur Bektas
+# Claude (Anthropic) was used to assist with code refactoring, validation, and documentation.
+#
 # Purpose: Variance partitioning from 10-fold CV results.
 #          - Venn diagram: median McFadden R² anova components + CI table
 #          - Ternary plots: species (filtered by AUC >= 0.7) and sites
@@ -14,9 +17,7 @@
 #   - output/data_calanda_jsdm_*.rds  (for Y matrix and site info)
 #
 # Outputs:
-#   - plot/venn_cv.pdf
-#   - plot/ternary_species_cv.pdf
-#   - plot/ternary_sites_cv.pdf
+#   - plot/vp_combined.pdf
 #
 # Requires: R/00_setup/functions_calanda.R
 # ==============================================================================
@@ -82,8 +83,8 @@ cat("\n--- Model-level R² across folds ---\n")
 
 # 1a) McFadden R² from anova (7 components + Full)
 anova_model_names = c("F_A", "F_B", "F_AB", "F_S", "F_AS", "F_BS", "F_ABS", "Full")
-anova_labels = c("Environment", "Biotic", "Env x Bio", "Spatial",
-                 "Env x Spa", "Bio x Spa", "Shared", "Full")
+anova_labels = c("Environment", "Species Associations", "Env x Sp. Assoc.", "Space",
+                 "Env x Space", "Sp. Assoc. x Space", "Shared", "Full")
 
 anova_r2_list = list()
 tjur_r2_vec = numeric(k)
@@ -141,64 +142,35 @@ cat(sprintf("\n  Tjur R² (discrimination): mean = %.4f, median = %.4f [%.4f, %.
 # ==============================================================================
 cat("\n--- Venn diagram ---\n")
 
-# Build a fake anova object with median R² to pass to plot_anova_custom
-median_r2 = df_anova_summary %>% select(model, median_r2)
+# Build a fake anova object with mean R² to pass to plot_anova_custom
+# IMPORTANT: df_anova_summary is in alphabetical order by model, but anova_model_names
+# is in the order expected by plot_anova_custom. Use match() to reorder.
+mean_r2 = df_anova_summary %>% select(model, mean_r2)
+r2_ordered = mean_r2$mean_r2[match(anova_model_names, mean_r2$model)]
 venn_results = data.frame(
   models = c(anova_model_names, "Saturated", "Null"),
   `ll` = NA,
   `Residual deviance` = NA,
   `Deviance` = NA,
   `R2 Nagelkerke` = NA,
-  `R2 McFadden` = c(median_r2$median_r2, NA, 0),
+  `R2 McFadden` = c(r2_ordered, NA, 0),
   check.names = FALSE
 )
 venn_obj = list(results = venn_results, spatial = TRUE)
-
-# CI table for annotation
-ci_table = df_anova_summary %>%
-  filter(model != "Full") %>%
-  mutate(ci_text = sprintf("%s: %.3f [%.3f, %.3f]",
-                           label, median_r2, ci_lo, ci_hi)) %>%
-  pull(ci_text)
-full_row = df_anova_summary %>% filter(model == "Full")
-full_text = sprintf("Full model: %.3f [%.3f, %.3f]",
-                    full_row$median_r2, full_row$ci_lo, full_row$ci_hi)
-tjur_text = sprintf("Tjur R2: %.3f [%.3f, %.3f]",
-                    tjur_summary$median_val, tjur_summary$ci_lo, tjur_summary$ci_hi)
-
-pdf(here("Calanda_JSDM", "plot", "venn_cv.pdf"), width = 12, height = 8)
-layout(matrix(c(1, 2), nrow = 1), widths = c(2, 1.2))
-# Left: Venn
-par(mar = c(2, 2, 3, 0))
-plot_anova_custom(venn_obj, cols = c(color_env, color_codist, color_spa))
-title(main = sprintf("Variance Partitioning (median across %d folds)", k),
-      cex.main = 1.2)
-# Right: CI table
-par(mar = c(2, 0, 3, 2))
-plot(NULL, xlim = c(0, 1), ylim = c(0, 1), axes = FALSE, xlab = "", ylab = "")
-title(main = "McFadden R\u00B2: median [95% CI]", cex.main = 1)
-all_lines = c(full_text, "", ci_table, "", tjur_text)
-n_lines = length(all_lines)
-for (li in seq_along(all_lines)) {
-  y_pos = 0.95 - (li - 1) * 0.08
-  font_face = if (li == 1 || li == n_lines) 2 else 1  # bold for full + tjur
-  text(0.05, y_pos, all_lines[li], adj = c(0, 1), cex = 0.85, font = font_face)
-}
-dev.off()
-cat("  Saved venn_cv.pdf\n")
 
 # ==============================================================================
 # 3. SPECIES-LEVEL VP — aggregate across folds, filter by AUC
 # ==============================================================================
 cat("\n--- Species VP (filtered by AUC >= 0.7) ---\n")
 
+# Use species names (not positional indices) to identify species across folds
 sp_vp_list = list()
 for (fi in seq_len(k)) {
   fd = fold_data_list[[fi]]
   sp = fd$partition$species
   sp_vp_list[[fi]] = tibble(
     fold = fi,
-    species_idx = seq_len(nrow(sp)),
+    species_name = sp_names,
     r2 = sp[, "r2"],
     env = sp[, "env"],
     spa = sp[, "spa"],
@@ -210,7 +182,7 @@ df_sp_vp = bind_rows(sp_vp_list)
 # Mean + CI per species per component
 df_sp_summary = df_sp_vp %>%
   pivot_longer(cols = c(r2, env, spa, codist), names_to = "component", values_to = "value") %>%
-  group_by(species_idx, component) %>%
+  group_by(species_name, component) %>%
   summarise(
     mean_val = mean(value, na.rm = TRUE),
     sd_val   = sd(value, na.rm = TRUE),
@@ -220,23 +192,24 @@ df_sp_summary = df_sp_vp %>%
     .groups  = "drop"
   ) %>%
   mutate(
-    species_name = sp_names[species_idx],
+    species_idx = match(species_name, sp_names),
     weight = 1 / pmax(ci_width, 0.001)^2
   )
 
-# Join AUC
+# Join AUC (by name, not position — CSV order differs from Y columns)
+sp_auc_map = tibble(species_idx = seq_len(n_species), species_name = sp_names) %>%
+  left_join(species_cv %>% select(species, test_auc), by = c("species_name" = "species"))
 df_sp_summary = df_sp_summary %>%
-  left_join(tibble(species_idx = seq_len(n_species), auc = species_cv$test_auc),
-            by = "species_idx")
+  left_join(sp_auc_map %>% select(species_idx, auc = test_auc), by = "species_idx")
 
 # Filter: AUC >= 0.7
-sp_keep = species_cv$test_auc >= 0.7 & !is.na(species_cv$test_auc)
-n_sp_keep = sum(sp_keep)
+sp_keep_idx = sp_auc_map$species_idx[sp_auc_map$test_auc >= 0.7 & !is.na(sp_auc_map$test_auc)]
+n_sp_keep = length(sp_keep_idx)
 n_sp_drop = n_species - n_sp_keep
 cat(sprintf("  %d / %d species kept (AUC >= 0.7), %d removed\n",
             n_sp_keep, n_species, n_sp_drop))
 
-df_sp_filtered = df_sp_summary %>% filter(sp_keep[species_idx])
+df_sp_filtered = df_sp_summary %>% filter(species_idx %in% sp_keep_idx)
 
 # Wide format for ternary
 df_sp_tern = df_sp_filtered %>%
@@ -249,12 +222,18 @@ df_sp_tern = df_sp_filtered %>%
 # ==============================================================================
 cat("\n--- Site VP (filtered by logloss <= log(2)) ---\n")
 
+# Use site names (not positional indices) to identify sites across folds
+site_names = rownames(data_calanda$X)
+
 si_vp_list = list()
 for (fi in seq_len(k)) {
   fd = fold_data_list[[fi]]
   si = fd$partition$sites
+  # Map train_idx to site names for safe joining
+  train_site_names = site_names[fd$train_idx]
   si_vp_list[[fi]] = tibble(
     fold = fi,
+    site_name = train_site_names,
     site_idx = fd$train_idx,
     r2 = si[, "r2"],
     env = si[, "env"],
@@ -264,9 +243,10 @@ for (fi in seq_len(k)) {
 }
 df_si_vp = bind_rows(si_vp_list)
 
+# Aggregate by site_name (not positional index) for safety
 df_si_summary = df_si_vp %>%
   pivot_longer(cols = c(r2, env, spa, codist), names_to = "component", values_to = "value") %>%
-  group_by(site_idx, component) %>%
+  group_by(site_name, site_idx, component) %>%
   summarise(
     mean_val = mean(value, na.rm = TRUE),
     sd_val   = sd(value, na.rm = TRUE),
@@ -274,22 +254,33 @@ df_si_summary = df_si_vp %>%
     ci_hi    = mean_val + qt(0.975, n() - 1) * sd_val / sqrt(n()),
     ci_width = ci_hi - ci_lo,
     .groups  = "drop"
-  ) %>%
-  mutate(weight = 1 / pmax(ci_width, 0.001)^2)
+  )
 
-# Join logloss
+# Filter out sites with unstable VP estimates (ci_width >= 0.1 on any component)
+unstable_sites = df_si_summary %>%
+  filter(ci_width >= 0.1) %>%
+  pull(site_idx) %>%
+  unique()
+if (length(unstable_sites) > 0) {
+  cat(sprintf("  Removing %d site(s) with ci_width >= 0.1\n", length(unstable_sites)))
+  df_si_summary = df_si_summary %>% filter(!site_idx %in% unstable_sites)
+}
+
+# Join logloss by site name (not position)
 df_si_summary = df_si_summary %>%
-  left_join(tibble(site_idx = seq_len(n_sites), logloss = site_cv$logloss),
-            by = "site_idx")
+  left_join(site_cv %>% select(site, logloss), by = c("site_name" = "site"))
 
 # Filter: logloss <= log(2)
-si_keep = site_cv$logloss <= log(2) & !is.na(site_cv$logloss)
-n_si_keep = sum(si_keep)
+si_keep_names = df_si_summary %>%
+  filter(component == "r2", logloss <= log(2), !is.na(logloss)) %>%
+  pull(site_name) %>%
+  unique()
+n_si_keep = length(si_keep_names)
 n_si_drop = n_sites - n_si_keep
 cat(sprintf("  %d / %d sites kept (logloss <= log(2) = %.3f), %d removed\n",
             n_si_keep, n_sites, log(2), n_si_drop))
 
-df_si_filtered = df_si_summary %>% filter(si_keep[site_idx])
+df_si_filtered = df_si_summary %>% filter(site_name %in% si_keep_names)
 
 # Wide format for ternary
 df_si_tern = df_si_filtered %>%
@@ -350,7 +341,7 @@ df_sp_violin = df_sp_filtered %>%
     type = "Species",
     component = factor(component,
                        levels = c("env", "codist", "spa", "r2"),
-                       labels = c("Environment", "Biotic", "Spatial", "R^2"))
+                       labels = c("Environment", "Species~Associations", "Space", "R^2"))
   )
 
 # Sites
@@ -360,7 +351,7 @@ df_si_violin = df_si_filtered %>%
     type = "Sites",
     component = factor(component,
                        levels = c("env", "codist", "spa", "r2"),
-                       labels = c("Environment", "Biotic", "Spatial", "R^2"))
+                       labels = c("Environment", "Species~Associations", "Space", "R^2"))
   )
 
 df_violin = bind_rows(df_sp_violin, df_si_violin) %>%
@@ -372,12 +363,12 @@ df_medians = df_violin %>%
   summarise(median_val = median(mean_val, na.rm = TRUE), .groups = "drop")
 
 # Component violin colors
-comp_colors = c("Environment" = color_env, "Biotic" = color_codist,
-                "Spatial" = color_spa, "R^2" = "grey50")
+comp_colors = c("Environment" = color_env, "Species~Associations" = color_codist,
+                "Space" = color_spa, "R^2" = "grey50")
 
 # Violin fill colors per component
-violin_fill = c("Environment" = color_env, "Biotic" = color_codist,
-                "Spatial" = color_spa, "R^2" = "grey60")
+violin_fill = c("Environment" = color_env, "Species~Associations" = color_codist,
+                "Space" = color_spa, "R^2" = "grey60")
 df_violin = df_violin %>%
   mutate(comp_fill = violin_fill[as.character(component)])
 
@@ -393,82 +384,49 @@ p_violins = ggplot(df_violin, aes(x = type, y = mean_val)) +
             vjust = -0.8, hjust = -0.9, size = 3.5, fontface = "bold") +
   scale_color_gradient(low = "grey10", high = "grey90", name = "CI width") +
   scale_fill_manual(values = violin_fill, guide = "none") +
-  facet_wrap(~ component, nrow = 1, scales = "free_y",
+  facet_wrap(~ component, nrow = 1,
              labeller = label_parsed) +
-  labs(x = NULL, y = "Variance proportion") +
+  labs(x = NULL, y = "Variance explained") +
   theme_bw(base_size = 18) +
   theme(
     axis.text.x = element_text(size = 16),
     axis.text.y = element_text(size = 15),
     axis.title.y = element_text(size = 18),
     strip.text = element_text(size = 17, face = "bold"),
-    legend.position = "right"
-  )
+    legend.position = "right",
+    plot.title = element_text(size = 18, face = "bold", hjust = 0)
+  ) +
+  ggtitle("B)")
 
 # --- Row 2: Scatter plots with correlations ---
-# Helper to add correlation annotations
-build_vp_scatter_combined = function(df, label_species = FALSE) {
-  # Pearson correlations
-  cor_eb = cor.test(df$env, df$codist, method = "pearson")
-  cor_es = cor.test(df$env, df$spa, method = "pearson")
-
-  cor_label = paste0(
-    "r(Env, Bio) = ", sprintf("%.2f", cor_eb$estimate),
-    "\nr(Env, Spa) = ", sprintf("%.2f", cor_es$estimate)
-  )
-
-  p = ggplot(df, aes(x = env, y = codist, color = spa, size = r2)) +
-    geom_hline(yintercept = 0, linewidth = 0.3, color = "grey60") +
-    geom_vline(xintercept = 0, linewidth = 0.3, color = "grey60") +
-    geom_abline(slope = 1, intercept = 0, linewidth = 0.3, linetype = "dashed", color = "grey50") +
-    geom_point(alpha = 0.7) +
-    scale_color_gradient(low = "grey85", high = color_spa, name = "Spatial") +
-    scale_size_continuous(range = c(1, 6), name = expression(R^2)) +
-    annotate("text",
-             x = 0.02,
-             y = max(df$codist, na.rm = TRUE),
-             label = cor_label, hjust = 0, vjust = 1, size = 4.5,
-             fontface = "italic") +
-    labs(x = "Environment", y = "Biotic") +
-    theme_bw(base_size = 18) +
-    theme(
-      axis.title = element_text(size = 18),
-      axis.text = element_text(size = 16),
-      legend.position = "right"
-    )
-
-  if (label_species && "species_name" %in% names(df)) {
-    labeled = bind_rows(
-      df %>% slice_max(env, n = 3),
-      df %>% slice_max(spa, n = 3),
-      df %>% slice_max(codist, n = 3),
-      df %>% slice_min(r2, n = 2),
-      df %>% slice_max(r2, n = 2)
-    ) %>% distinct(species_name, .keep_all = TRUE)
-    p = p + geom_text_repel(data = labeled, aes(label = species_name),
-                            size = 3.5, fontface = "italic",
-                            max.overlaps = 15, segment.color = "grey50",
-                            show.legend = FALSE)
-  }
-  p
-}
-
-p_scatter_sp = build_vp_scatter_combined(df_sp_tern, label_species = TRUE)
-p_scatter_si = build_vp_scatter_combined(df_si_tern)
+p_scatter_sp = build_vp_scatter_combined(df_sp_tern, label_species = TRUE) +
+  ggtitle("C)") + theme(plot.title = element_text(size = 18, face = "bold", hjust = 0))
+p_scatter_si = build_vp_scatter_combined(df_si_tern) +
+  ggtitle("D)") + theme(plot.title = element_text(size = 18, face = "bold", hjust = 0))
 
 # --- Compose full figure ---
 # Row 1: Venn (base R) captured as grob + violins
+# Build CI data in the exact row order used by plot_anova_custom:
+# F_A, F_B, F_AB, F_S, F_AS, F_BS, F_ABS
+venn_component_order = c("F_A", "F_B", "F_AB", "F_S", "F_AS", "F_BS", "F_ABS")
+venn_ci = df_anova_summary %>%
+  filter(model %in% venn_component_order) %>%
+  mutate(model = factor(model, levels = venn_component_order)) %>%
+  arrange(model) %>%
+  select(model, ci_lo, ci_hi)
+
 venn_grob = wrap_elements(full = ~ {
-  par(mar = c(1, 1, 2, 1))
-  plot_anova_custom(venn_obj, cols = c(color_env, color_codist, color_spa))
+  par(mar = c(1, 1, 3, 1))
+  plot_anova_custom(venn_obj, cols = c(color_env, color_codist, color_spa), ci_data = venn_ci)
+  title(main = "A)", adj = 0, cex.main = 1.5, font.main = 2)
   # Add CI annotation below
   full_r2 = df_anova_summary %>% filter(model == "Full")
-  mtext(sprintf("Full McFadden R\u00B2: %.3f [%.3f, %.3f]",
-                full_r2$median_r2, full_r2$ci_lo, full_r2$ci_hi),
-        side = 1, line = 0, cex = 0.9, font = 2)
+  mtext(sprintf("Full variance explained: %.3f [%.3f, %.3f]",
+                full_r2$mean_r2, full_r2$ci_lo, full_r2$ci_hi),
+        side = 1, line = 0, cex = 1.1, font = 2)
   mtext(sprintf("Tjur R\u00B2: %.3f [%.3f, %.3f]",
-                tjur_summary$median_val, tjur_summary$ci_lo, tjur_summary$ci_hi),
-        side = 1, line = 1, cex = 0.85)
+                tjur_summary$mean_val, tjur_summary$ci_lo, tjur_summary$ci_hi),
+        side = 1, line = 1.2, cex = 1.0)
 })
 
 # Set row 1 widths: Venn narrower, violins wider

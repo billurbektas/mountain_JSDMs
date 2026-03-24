@@ -1,8 +1,8 @@
 # Data and outputs
 output/
-plot/
 data/
 docs/
+plot/png/
 TransPlant_JSDM/
 
 # OS files

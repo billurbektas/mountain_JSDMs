@@ -1,5 +1,8 @@
 # ==============================================================================
-# Script: 01b_fetch_try_traits.R
+# Script: 01_prepare_TRY_traits.R
+# Author: Billur Bektas
+# Claude (Anthropic) was used to assist with code refactoring, validation, and documentation.
+#
 # Purpose: Fetch TRY trait data and ecological indicators using tidyTRY
 #
 # Description:

@@ -1,26 +1,41 @@
 # ==============================================================================
-# Script: 01_prepare_data.R
-# Purpose: Prepare environmental + vegetation data for JSDM analysis
+# Script: 04_prepare_climate_vegetation_data.R
+# Author: Billur Bektas
+# Claude (Anthropic) was used to assist with code refactoring, validation, and documentation.
+#
+# Purpose: Build environmental (X) and species (Y) matrices for the JSDM,
+#          compute community-weighted traits, unweighted community traits,
+#          and species functional distinctiveness.
 #
 # Inputs:
 #   - data/vegetation/2024_CAPHE_SpeDis_CleanData_20240214.csv
-#   - data/ecostress/*.csv (LST data)
-#   - data/modis/*.csv (ET data)
-#   - data/wekeo/ (Copernicus snow data)
 #   - data/vegetation/veg.coord.csv
-#   - data/mask/*.shp (study region shapefiles)
-#   - output/traits.csv (created by 01b_fetch_try_traits.R)
+#   - data/ecostress/*.csv (ECOSTRESS land surface temperature)
+#   - data/modis/*.csv (MODIS evapotranspiration)
+#   - data/wekeo/ (Copernicus GFSC snow cover ZIPs)
+#   - data/mask/study_region_2024.shp, data/mask/study_region.shp
+#   - output/traits_medians_imputed.csv (from 03_merge_and_assess_traits.R)
+#   - output/traits_medians_imputation_flags.csv
+#   - output/traits_kcv_imputation_flags.csv
 #
 # Outputs:
-#   - output/veg_clim.csv
-#   - output/veg_tree.csv (tree/shrub cover + woody species abundances)
-#   - output/starter_data_25.04.25.RData
-#   - plot/land_use_variable.pdf
+#   - output/data_calanda_jsdm_<date>.rds  (final X and Y matrices)
+#   - output/starter_data_<date>.RData     (full R workspace)
+#   - output/veg_clim.csv                  (merged vegetation + environmental data)
+#   - output/veg_tree.csv                  (tree/shrub cover + woody species abundances)
+#   - output/community_traits_imputed.csv  (abundance-weighted CWM, all traits)
+#   - output/community_traits_original.csv (abundance-weighted CWM, original only)
+#   - output/community_traits_unweighted_imputed.csv  (presence-based mean + var)
+#   - output/community_traits_unweighted_original.csv
+#   - output/species_functional_distinctiveness.csv
+#   - output/species_imputation_summary.csv
+#   - output/cwm_comparison.csv
+#   - plot/cwm_imputed_vs_original.pdf
 #   - plot/climate_calanda_surveys.pdf
 #
 # Requires:
 #   - R/00_setup/functions_calanda.R
-#   - Must run 01b_fetch_try_traits.R first to create output/traits.csv
+#   - Must run 03_merge_and_assess_traits.R first
 # ==============================================================================
 
 library(tidyverse)
@@ -365,7 +380,7 @@ veg_abund = veg_comm %>%
   select(-tot_rel_cover) %>%
   pivot_wider(names_from = species, values_from = rel_cover, values_fill = 0)
 
-cat("Plots with less than 80% cover taken out:", ncol(veg_abund) - 1, "species and",
+cat("Plots with less than 70% cover taken out:", ncol(veg_abund) - 1, "species and",
     length(unique(veg_abund$plot_id_releve)), "plots.\n")
 
 veg_abund = veg_abund %>%
@@ -671,6 +686,97 @@ write_csv(community_traits_original, here("Calanda_JSDM", "output", "community_t
 cat("Saved output/cwm_comparison.csv\n")
 cat("Saved output/community_traits_imputed.csv\n")
 cat("Saved output/community_traits_original.csv\n")
+
+# ==============================================================================
+# COMMUNITY TRAIT CALCULATIONS — UNWEIGHTED (mean + variance per site)
+# ==============================================================================
+cat("\n=== Calculating unweighted community traits (mean + variance) ===\n")
+# Tall woody species that are potentially juveniles and seedlings in the vegetation surveys.
+
+woody_species = c(
+  "Fagus sylvatica",
+  "Picea abies",
+  "Sorbus aucuparia",
+  "Acer pseudoplatanus",
+  "Larix decidua",
+  "Fraxinus excelsior",
+  "Pinus sylvestris",
+  "Corylus avellana",
+  "Cornus sanguinea",
+  "Ligustrum vulgare",
+  "Lonicera xylosteum",
+  "Rubus idaeus",
+  "Rubus fruticosus",
+  "Rubus caesius"
+)
+
+veg_tree_out = veg_tree %>%                                                                                                                                                                                                                                                                                                             
+                select(plot_id_releve, trees_cover, shrubs_cover, all_of(woody_species)) %>%
+                mutate(woody_sum = rowSums(across(all_of(woody_species)), na.rm = TRUE))%>%
+                select(plot_id_releve, trees_cover, shrubs_cover, woody_sum)%>%
+                filter(woody_sum>0.5)%>%
+                pull(plot_id_releve)
+
+# Remove woody species columns and veg_tree_out plots
+woody_in_Y = intersect(woody_species, colnames(Y))
+Y_filtered = Y[!rownames(veg_abund) %in% veg_tree_out,
+                                !colnames(veg_abund) %in% woody_in_Y]
+cat(sprintf("  Filtered: removed %d woody species, %d woody-dominated plots\n",
+            length(woody_in_Y), sum(rownames(veg_abund) %in% veg_tree_out)))
+cat(sprintf("  Remaining: %d plots x %d species\n",
+            nrow(Y_filtered), ncol(Y_filtered)))
+
+# Version 1: All traits (including imputed) — unweighted
+community_traits_uw = calculate_community_traits_unweighted(
+  community_data = Y_filtered,
+  traits_data = traits,
+  species_col = "species",
+  trait_cols = cwm_trait_cols,
+  log_traits = cwm_log_traits
+)
+
+# Version 2: Only original (non-imputed) — unweighted
+community_traits_uw_original = calculate_community_traits_unweighted(
+  community_data = Y_filtered,
+  traits_data = traits_original,
+  species_col = "species",
+  trait_cols = cwm_trait_cols,
+  log_traits = cwm_log_traits
+)
+
+cat("Unweighted community traits (imputed):", nrow(community_traits_uw), "plots\n")
+cat("Unweighted community traits (original):", nrow(community_traits_uw_original), "plots\n")
+
+write_csv(community_traits_uw,
+          here("Calanda_JSDM", "output", "community_traits_unweighted_imputed.csv"))
+write_csv(community_traits_uw_original,
+          here("Calanda_JSDM", "output", "community_traits_unweighted_original.csv"))
+cat("Saved output/community_traits_unweighted_imputed.csv\n")
+cat("Saved output/community_traits_unweighted_original.csv\n")
+
+# ==============================================================================
+# SPECIES FUNCTIONAL DISTINCTIVENESS
+# ==============================================================================
+cat("\n=== Calculating species functional distinctiveness ===\n")
+
+distinct_trait_cols = c("Median_LDMC", "Median_LA", "Median_LNC", "Median_LMA",
+                         "Median_vegetative_height", "Median_seed_mass")
+
+# Using filtered matrix (no woody species, no woody-dominated plots)
+sp_distinctiveness = calculate_functional_distinctiveness(
+  Y = Y_filtered,
+  traits_data = traits,
+  species_col = "species",
+  trait_cols = distinct_trait_cols,
+  log_traits = distinct_trait_cols  # same log-transform as CWMs
+)
+
+cat(sprintf("  Distinctiveness for %d species, %d traits\n",
+            nrow(sp_distinctiveness), length(distinct_trait_cols)))
+
+write_csv(sp_distinctiveness,
+          here("Calanda_JSDM", "output", "species_functional_distinctiveness.csv"))
+cat("Saved output/species_functional_distinctiveness.csv\n")
 
 # ==============================================================================
 # ADD CWM NUTRIENTS AND DISTURBANCE TO ENVIRONMENTAL DATA
