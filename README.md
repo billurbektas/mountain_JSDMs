@@ -144,16 +144,4 @@ run_validation    = FALSE  # Step 6
 
 ---
 
-### Naming conventions
-
-| Component | Convention |
-|-----------|-----------|
-| Assignment | `=` (not `<-`) |
-| Variables | `snake_case` |
-| Paths | `here::here("Calanda_JSDM", ...)` |
-| VP colors | Environment `#81caf3`, Species Associations `#00bd89`, Space `#d00000` |
-| VP labels | "Environment", "Species Associations", "Space" |
-
----
-
 *Last updated: 2026-03-24*
